@@ -1,0 +1,28 @@
+[config]
+default_to_workspace = false
+skip_core_tasks = true
+skip_git_env_info = true
+skip_rust_env_info = true
+skip_crate_env_info = true
+
+[tasks.install-cargo-release]
+private = true
+install_crate = { crate_name = "cargo-release", binary = "cargo", test_arg = [
+    "release",
+    "--version",
+], version = "0.24.10" }
+
+[tasks.bump]
+description = "Bumps the synapse package to the specified version (will trigger automatic release when merged to main)"
+dependencies = ["install-cargo-release"]
+script = '''
+VERSION=${@}
+cargo release version $VERSION --execute --no-confirm -p synapse
+if [[ ! -f "changelog/$VERSION.md" ]]; then
+    if [[ -f "changelog/unreleased.md" ]]; then
+        mv "changelog/unreleased.md" "changelog/$VERSION.md"
+    else
+        touch "changelog/$VERSION.md"
+    fi
+fi
+'''

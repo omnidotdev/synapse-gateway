@@ -1,0 +1,41 @@
+[package]
+name = "synapse-llm"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+aws-config.workspace = true
+aws-credential-types.workspace = true
+aws-sdk-bedrock.workspace = true
+aws-sdk-bedrockruntime.workspace = true
+aws-smithy-runtime-api.workspace = true
+aws-smithy-types.workspace = true
+axum.workspace = true
+base64.workspace = true
+dashmap.workspace = true
+eventsource-stream.workspace = true
+futures-util.workspace = true
+http.workspace = true
+reqwest = { workspace = true, features = ["json", "stream"] }
+secrecy.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+synapse-config.workspace = true
+synapse-core.workspace = true
+synapse-ratelimit.workspace = true
+synapse-telemetry.workspace = true
+thiserror.workspace = true
+tiktoken-rs.workspace = true
+tokio = { workspace = true, features = ["time", "sync"] }
+regex.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,110 @@
+use std::collections::HashMap;
+
+use secrecy::SecretString;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+/// Runtime context for provider requests
+///
+/// Shared across LLM, STT, and TTS request flows
+#[derive(Debug, Clone)]
+pub struct RequestContext {
+    /// HTTP request parts (method, URI, headers, extensions)
+    pub parts: http::request::Parts,
+    /// User-provided API key that overrides the configured key
+    pub api_key: Option<SecretString>,
+    /// Client identity for rate limiting and access control
+    pub client_identity: Option<ClientIdentity>,
+    /// Authentication state from JWT/OAuth validation
+    pub authentication: Authentication,
+}
+
+impl RequestContext {
+    /// Access request headers
+    pub fn headers(&self) -> &http::HeaderMap {
+        &self.parts.headers
+    }
+}
+
+/// Identified client and their group membership
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientIdentity {
+    /// Client identifier (e.g. user ID, API key ID)
+    pub client_id: String,
+    /// Group the client belongs to (e.g. "free", "pro", "enterprise")
+    pub group: Option<String>,
+}
+
+/// Authentication state extracted from incoming requests
+#[derive(Default, Clone, Debug)]
+pub struct Authentication {
+    /// Validated Synapse JWT token, if present
+    pub synapse: Option<SynapseToken>,
+    /// Whether the request includes an Anthropic authorization header
+    pub has_anthropic_authorization: bool,
+}
+
+/// Validated JWT token with raw and parsed representations
+#[derive(Clone, Debug)]
+pub struct SynapseToken {
+    /// Raw token string (kept secret for forwarding)
+    pub raw: SecretString,
+    /// Parsed and validated JWT
+    pub token: jwt_compact::Token<Claims>,
+}
+
+impl std::ops::Deref for SynapseToken {
+    type Target = jwt_compact::Token<Claims>;
+    fn deref(&self) -> &Self::Target {
+        &self.token
+    }
+}
+
+/// JWT claims supporting OAuth 2.0 scopes and custom fields
+#[serde_with::serde_as]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Claims {
+    /// Issuer
+    #[serde(default, rename = "iss")]
+    pub issuer: Option<String>,
+    /// Audience (single value or array)
+    #[serde_as(deserialize_as = "Option<serde_with::OneOrMany<_>>")]
+    #[serde(default, rename = "aud")]
+    pub audience: Option<Vec<String>>,
+    /// Subject
+    #[serde(default, rename = "sub")]
+    pub subject: Option<String>,
+    /// Additional claims for flexible access to custom fields
+    #[serde(flatten)]
+    pub additional: HashMap<String, Value>,
+}
+
+impl Claims {
+    /// Extract a claim value by path, supporting nested claims
+    ///
+    /// Paths can be simple (e.g. "sub") or nested (e.g. "user.plan").
+    #[must_use]
+    pub fn get_claim(&self, path: &str) -> Option<String> {
+        match path {
+            "iss" => return self.issuer.clone(),
+            "sub" => return self.subject.clone(),
+            "aud" => {
+                return self.audience.as_ref().and_then(|audiences| audiences.first().cloned());
+            }
+            _ => {}
+        }
+
+        let mut parts = path.split('.');
+        let first = parts.next()?;
+        let current = parts.fold(self.additional.get(first).unwrap_or(&Value::Null), |current, part| {
+            current.get(part).unwrap_or(&Value::Null)
+        });
+
+        match current {
+            Value::String(s) => Some(s.clone()),
+            Value::Number(n) => Some(n.to_string()),
+            Value::Bool(b) => Some(b.to_string()),
+            _ => None,
+        }
+    }
+}
