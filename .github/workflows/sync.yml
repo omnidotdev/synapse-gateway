@@ -1,4 +1,4 @@
-name: Sync
+name: Sync 🔄
 
 on:
   pull_request:
@@ -9,7 +9,7 @@ env:
 
 jobs:
   version-sync:
-    name: Version sync
+    name: Version sync 📦
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,7 +23,7 @@ jobs:
         run: bun scripts/syncVersion.ts --check
 
   check:
-    name: Check
+    name: Check 🦀
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

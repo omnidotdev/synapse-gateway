@@ -1,4 +1,4 @@
-name: Release
+name: Release 🏗️
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   release:
-    name: Release
+    name: Handle release 🦋
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,7 +35,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build:
-    name: Build (${{ matrix.target }})
+    name: Build ${{ matrix.target }} 🔨
     needs: release
     if: needs.release.outputs.published == 'true'
     runs-on: ${{ matrix.os }}
