@@ -43,7 +43,7 @@ FROM cgr.dev/chainguard/wolfi-base:latest
 
 LABEL org.opencontainers.image.url='https://synapse.omni.dev' \
     org.opencontainers.image.documentation='https://synapse.omni.dev/docs' \
-    org.opencontainers.image.source='https://github.com/omnidotdev/synapse' \
+    org.opencontainers.image.source='https://github.com/omnidotdev/synapse-server' \
     org.opencontainers.image.vendor='Omni' \
     org.opencontainers.image.description='Omni Synapse - AI Router' \
     org.opencontainers.image.licenses='MIT'

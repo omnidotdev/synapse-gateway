@@ -7,7 +7,7 @@ edition = "2024"
 license = "MIT"
 homepage = "https://synapse.omni.dev"
 keywords = ["synapse", "llm", "ai", "mcp", "stt", "tts"]
-repository = "https://github.com/omnidotdev/synapse"
+repository = "https://github.com/omnidotdev/synapse-server"
 
 [workspace.dependencies]
 anyhow = "1.0.98"
@@ -74,6 +74,7 @@ serde_json = "1.0"
 serde_with = "3"
 sha2 = "0.10"
 strum = { version = "0.27", features = ["derive"] }
+synapse-client = { path = "crates/synapse-client" }
 synapse-config = { path = "crates/synapse-config" }
 synapse-core = { path = "crates/synapse-core" }
 synapse-llm = { path = "crates/synapse-llm" }
