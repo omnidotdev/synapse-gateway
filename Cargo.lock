@@ -2060,11 +2060,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "bytes",
  "indexmap 2.11.4",
  "reqwest",
  "secrecy",
  "serde",
  "serde_json",
+ "synapse-client",
  "synapse-config",
  "synapse-server",
  "tokio",
