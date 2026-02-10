@@ -1,6 +1,6 @@
 //! Threshold-based routing strategy
 //!
-//! Adapted from LLMRouter's HybridLLMRouter. Routes queries to a cheap
+//! Adapted from `LLMRouter`'s `HybridLLMRouter`. Routes queries to a cheap
 //! or frontier model based on heuristic complexity classification.
 //! Low complexity → cheapest model above quality floor.
 //! High complexity → best quality model.
@@ -9,7 +9,9 @@ use synapse_config::ThresholdConfig;
 
 use crate::analysis::{Complexity, QueryProfile};
 use crate::error::RoutingError;
+use crate::feedback::FeedbackTracker;
 use crate::registry::ModelRegistry;
+use crate::scoring::effective_quality;
 use crate::{RoutingDecision, RoutingReason};
 
 /// Route a query using the threshold strategy
@@ -17,6 +19,7 @@ pub fn route(
     profile: &QueryProfile,
     registry: &ModelRegistry,
     config: &ThresholdConfig,
+    feedback: Option<&FeedbackTracker>,
 ) -> Result<RoutingDecision, RoutingError> {
     // If explicit models are configured, use them directly
     if let (Some(low), Some(high)) = (&config.low_complexity_model, &config.high_complexity_model) {
@@ -44,11 +47,16 @@ pub fn route(
         });
     }
 
-    // Fall back to registry-based selection
+    // Fall back to registry-based selection, using feedback-adjusted quality
     let selected = match profile.complexity {
-        Complexity::Low => registry
-            .cheapest_above_quality(config.quality_floor)
-            .ok_or(RoutingError::NoProfiles)?,
+        Complexity::Low => {
+            // Find cheapest model whose feedback-adjusted quality meets the floor
+            registry
+                .by_cost()
+                .into_iter()
+                .find(|p| effective_quality(p, feedback) >= config.quality_floor)
+                .ok_or(RoutingError::NoProfiles)?
+        }
         Complexity::Medium | Complexity::High => registry.best_quality().ok_or(RoutingError::NoProfiles)?,
     };
 
@@ -112,7 +120,7 @@ mod tests {
             requires_tool_use: false,
         };
         let config = ThresholdConfig::default();
-        let decision = route(&profile, &registry, &config).unwrap();
+        let decision = route(&profile, &registry, &config, None).unwrap();
         assert_eq!(decision.model, "gpt-4o-mini");
         assert_eq!(decision.reason, RoutingReason::LowComplexity);
     }
@@ -127,7 +135,7 @@ mod tests {
             requires_tool_use: false,
         };
         let config = ThresholdConfig::default();
-        let decision = route(&profile, &registry, &config).unwrap();
+        let decision = route(&profile, &registry, &config, None).unwrap();
         assert_eq!(decision.model, "claude-sonnet");
         assert_eq!(decision.reason, RoutingReason::HighComplexity);
     }

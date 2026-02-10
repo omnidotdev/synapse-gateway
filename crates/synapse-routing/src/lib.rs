@@ -1,21 +1,28 @@
 //! Smart model routing for Synapse
 //!
-//! Provides heuristic-based routing strategies adapted from LLMRouter:
-//! - **Threshold**: route by complexity (HybridLLMRouter pattern)
+//! Provides heuristic-based routing strategies adapted from `LLMRouter`:
+//! - **Threshold**: route by complexity (`HybridLLMRouter` pattern)
 //! - **Cost**: maximize quality within budget
-//! - **Cascade**: try cheap first, escalate on low confidence (AutomixRouter pattern)
+//! - **Cascade**: try cheap first, escalate on low confidence (`AutomixRouter` pattern)
 
-#![allow(clippy::must_use_candidate, clippy::missing_errors_doc)]
+#![allow(
+    clippy::must_use_candidate,
+    clippy::missing_errors_doc,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
 
 pub mod analysis;
 pub mod error;
 pub mod feedback;
 pub mod registry;
+pub mod scoring;
 pub mod strategy;
 
 pub use analysis::{QueryProfile, analyze_query};
 pub use error::RoutingError;
-pub use feedback::{FeedbackTracker, RequestFeedback};
+pub use feedback::{FeedbackTracker, ModelFeedback, RequestFeedback};
 pub use registry::{ModelProfile, ModelRegistry};
 
 /// The reason a particular model was selected
@@ -33,6 +40,8 @@ pub enum RoutingReason {
     CascadeInitial,
     /// Escalated to stronger model after low-confidence response
     CascadeEscalated,
+    /// Selected by multi-objective score optimization
+    ScoreOptimized,
 }
 
 /// Result of a routing decision
@@ -54,6 +63,7 @@ pub fn route_request(
     has_tools: bool,
     registry: &ModelRegistry,
     config: &synapse_config::RoutingConfig,
+    feedback: Option<&FeedbackTracker>,
 ) -> Result<RoutingDecision, RoutingError> {
     let profile = analyze_query(messages, has_tools);
 
@@ -66,11 +76,16 @@ pub fn route_request(
 
     let decision = match config.strategy {
         synapse_config::RoutingStrategy::Threshold => {
-            strategy::threshold::route(&profile, registry, &config.threshold)?
+            strategy::threshold::route(&profile, registry, &config.threshold, feedback)?
         }
-        synapse_config::RoutingStrategy::Cost => strategy::cost::route(&profile, registry, &config.cost)?,
+        synapse_config::RoutingStrategy::Cost => {
+            strategy::cost::route(&profile, registry, &config.cost, feedback)?
+        }
         synapse_config::RoutingStrategy::Cascade => {
-            strategy::cascade::route(&profile, registry, &config.cascade)?
+            strategy::cascade::route(&profile, registry, &config.cascade, feedback)?
+        }
+        synapse_config::RoutingStrategy::Score => {
+            strategy::score::route(&profile, registry, &config.score, feedback)?
         }
     };
 

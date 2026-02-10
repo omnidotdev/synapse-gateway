@@ -8,17 +8,23 @@ use synapse_config::CostConfig;
 
 use crate::analysis::QueryProfile;
 use crate::error::RoutingError;
+use crate::feedback::FeedbackTracker;
 use crate::registry::ModelRegistry;
+use crate::scoring::effective_quality;
 use crate::{RoutingDecision, RoutingReason};
 
 /// Default output-to-input token ratio for cost estimation
 const DEFAULT_OUTPUT_RATIO: f64 = 0.5;
+
+/// Error rate above which a model is excluded from cost routing
+const UNHEALTHY_ERROR_RATE: f64 = 0.50;
 
 /// Route a query using cost-constrained strategy
 pub fn route(
     profile: &QueryProfile,
     registry: &ModelRegistry,
     config: &CostConfig,
+    feedback: Option<&FeedbackTracker>,
 ) -> Result<RoutingDecision, RoutingError> {
     let Some(max_cost) = config.max_cost_per_request else {
         // No budget constraint — just pick the best model
@@ -38,14 +44,37 @@ pub fn route(
 
     let estimated_output = (profile.estimated_input_tokens as f64 * DEFAULT_OUTPUT_RATIO) as usize;
 
-    // Filter models that fit within budget, then pick the highest quality
+    // Filter models that fit within budget and aren't unhealthy
     let mut candidates: Vec<_> = registry
         .profiles()
         .iter()
         .filter(|p| p.estimate_cost(profile.estimated_input_tokens, estimated_output) <= max_cost)
+        .filter(|p| {
+            feedback
+                .and_then(|f| {
+                    let snap = f.snapshot(&p.provider, &p.model);
+                    snap.error_rate
+                        .filter(|_| snap.sample_count >= 10)
+                        .map(|rate| rate < UNHEALTHY_ERROR_RATE)
+                })
+                .unwrap_or(true)
+        })
         .collect();
 
-    candidates.sort_by(|a, b| b.quality.partial_cmp(&a.quality).unwrap_or(std::cmp::Ordering::Equal));
+    // Sort by feedback-adjusted quality, tiebreak by observed p50 latency
+    candidates.sort_by(|a, b| {
+        let qa = effective_quality(a, feedback);
+        let qb = effective_quality(b, feedback);
+        qb.partial_cmp(&qa).unwrap_or(std::cmp::Ordering::Equal).then_with(|| {
+            let la = feedback
+                .and_then(|f| f.snapshot(&a.provider, &a.model).latency_p50_ms)
+                .unwrap_or(f64::MAX);
+            let lb = feedback
+                .and_then(|f| f.snapshot(&b.provider, &b.model).latency_p50_ms)
+                .unwrap_or(f64::MAX);
+            la.partial_cmp(&lb).unwrap_or(std::cmp::Ordering::Equal)
+        })
+    });
 
     let selected = candidates.first().ok_or(RoutingError::NoModelAvailable {
         class: "cost".to_owned(),
@@ -106,7 +135,7 @@ mod tests {
         let config = CostConfig {
             max_cost_per_request: Some(0.001),
         };
-        let decision = route(&profile, &registry, &config).unwrap();
+        let decision = route(&profile, &registry, &config, None).unwrap();
         assert_eq!(decision.model, "small-model");
     }
 
@@ -122,7 +151,7 @@ mod tests {
         let config = CostConfig {
             max_cost_per_request: None,
         };
-        let decision = route(&profile, &registry, &config).unwrap();
+        let decision = route(&profile, &registry, &config, None).unwrap();
         assert_eq!(decision.model, "big-model");
     }
 }

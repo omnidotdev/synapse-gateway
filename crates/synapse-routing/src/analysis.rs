@@ -85,9 +85,7 @@ fn extract_last_user_message(messages: &[serde_json::Value]) -> String {
 
 /// Estimate token count using tiktoken
 fn estimate_tokens(text: &str) -> usize {
-    o200k_base()
-        .map(|bpe| bpe.encode_with_special_tokens(text).len())
-        .unwrap_or_else(|_| text.len() / 4)
+    o200k_base().map_or_else(|_| text.len() / 4, |bpe| bpe.encode_with_special_tokens(text).len())
 }
 
 /// Classify the task type from the last user message
@@ -205,8 +203,6 @@ fn assess_complexity(tokens: usize, task_type: TaskType, has_tools: bool) -> Com
         TaskType::Code | TaskType::Math => {
             if tokens > 2000 {
                 Complexity::High
-            } else if tokens > 500 {
-                Complexity::Medium
             } else {
                 Complexity::Medium
             }

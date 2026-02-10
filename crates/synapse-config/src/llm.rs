@@ -199,7 +199,7 @@ const fn default_recovery_seconds() -> u64 {
 // -- Routing configuration --
 
 /// Smart model routing configuration
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoutingConfig {
     /// Whether smart routing is enabled
@@ -220,19 +220,9 @@ pub struct RoutingConfig {
     /// Cascade strategy configuration
     #[serde(default)]
     pub cascade: CascadeConfig,
-}
-
-impl Default for RoutingConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            strategy: RoutingStrategy::default(),
-            models: Vec::new(),
-            threshold: ThresholdConfig::default(),
-            cost: CostConfig::default(),
-            cascade: CascadeConfig::default(),
-        }
-    }
+    /// Score strategy configuration
+    #[serde(default)]
+    pub score: ScoreConfig,
 }
 
 /// Available routing strategies
@@ -246,6 +236,8 @@ pub enum RoutingStrategy {
     Cost,
     /// Try cheap model first, escalate if low confidence
     Cascade,
+    /// Multi-objective weighted scoring (quality + cost + latency)
+    Score,
 }
 
 /// Configuration for a model profile used in smart routing
@@ -318,20 +310,12 @@ const fn default_quality_floor() -> f64 {
 }
 
 /// Configuration for cost-constrained routing
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CostConfig {
     /// Maximum cost per request in USD
     #[serde(default)]
     pub max_cost_per_request: Option<f64>,
-}
-
-impl Default for CostConfig {
-    fn default() -> Self {
-        Self {
-            max_cost_per_request: None,
-        }
-    }
 }
 
 /// Configuration for cascade routing
@@ -347,6 +331,12 @@ pub struct CascadeConfig {
     /// Confidence threshold below which to escalate (0.0 to 1.0)
     #[serde(default = "default_confidence_threshold")]
     pub confidence_threshold: f64,
+    /// Maximum bytes to buffer during streaming cascade before committing
+    #[serde(default = "default_max_buffer_bytes")]
+    pub max_buffer_bytes: usize,
+    /// Seconds to wait for buffered response before committing
+    #[serde(default = "default_buffer_timeout_secs")]
+    pub buffer_timeout_secs: u64,
 }
 
 impl Default for CascadeConfig {
@@ -355,10 +345,73 @@ impl Default for CascadeConfig {
             initial_model: None,
             escalation_model: None,
             confidence_threshold: default_confidence_threshold(),
+            max_buffer_bytes: default_max_buffer_bytes(),
+            buffer_timeout_secs: default_buffer_timeout_secs(),
         }
     }
 }
 
 const fn default_confidence_threshold() -> f64 {
     0.5
+}
+
+const fn default_max_buffer_bytes() -> usize {
+    32 * 1024 // 32 KB
+}
+
+const fn default_buffer_timeout_secs() -> u64 {
+    10
+}
+
+/// Configuration for multi-objective score routing
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScoreConfig {
+    /// Weight for quality component (0.0 to 1.0)
+    #[serde(default = "default_weight_quality")]
+    pub weight_quality: f64,
+    /// Weight for cost component (0.0 to 1.0)
+    #[serde(default = "default_weight_cost")]
+    pub weight_cost: f64,
+    /// Weight for latency component (0.0 to 1.0)
+    #[serde(default = "default_weight_latency")]
+    pub weight_latency: f64,
+    /// Error rate penalty multiplier
+    #[serde(default = "default_error_penalty")]
+    pub error_penalty: f64,
+    /// Minimum samples before feedback influences scoring
+    #[serde(default = "default_min_samples")]
+    pub min_samples: usize,
+}
+
+impl Default for ScoreConfig {
+    fn default() -> Self {
+        Self {
+            weight_quality: default_weight_quality(),
+            weight_cost: default_weight_cost(),
+            weight_latency: default_weight_latency(),
+            error_penalty: default_error_penalty(),
+            min_samples: default_min_samples(),
+        }
+    }
+}
+
+const fn default_weight_quality() -> f64 {
+    0.5
+}
+
+const fn default_weight_cost() -> f64 {
+    0.3
+}
+
+const fn default_weight_latency() -> f64 {
+    0.2
+}
+
+const fn default_error_penalty() -> f64 {
+    1.0
+}
+
+const fn default_min_samples() -> usize {
+    10
 }

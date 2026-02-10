@@ -1,17 +1,17 @@
 //! Cascade routing strategy
 //!
-//! Adapted from LLMRouter's AutomixRouter. Tries a cheap model first,
+//! Adapted from `LLMRouter`'s `AutomixRouter`. Tries a cheap model first,
 //! then evaluates response confidence heuristically. If confidence is
 //! below threshold, escalates to a stronger model.
 //!
-//! Unlike AutoMix's LLM-based self-verification, this uses simple
+//! Unlike `AutoMix`'s LLM-based self-verification, this uses simple
 //! heuristic confidence signals (response length, hedging language).
-//! Non-streaming only — streaming responses can't be re-evaluated.
 
 use synapse_config::CascadeConfig;
 
 use crate::analysis::QueryProfile;
 use crate::error::RoutingError;
+use crate::feedback::FeedbackTracker;
 use crate::registry::ModelRegistry;
 use crate::{RoutingDecision, RoutingReason};
 
@@ -24,6 +24,7 @@ pub fn route(
     _profile: &QueryProfile,
     registry: &ModelRegistry,
     config: &CascadeConfig,
+    _feedback: Option<&FeedbackTracker>,
 ) -> Result<RoutingDecision, RoutingError> {
     let (provider, model) = resolve_initial(registry, config)?;
     let (esc_provider, esc_model) = resolve_escalation(registry, config)?;
@@ -34,6 +35,14 @@ pub fn route(
         reason: RoutingReason::CascadeInitial,
         alternatives: vec![(esc_provider, esc_model)],
     })
+}
+
+/// Evaluate a buffered streaming response for confidence
+///
+/// Wrapper around `should_escalate` for use in the streaming cascade path.
+/// Returns `true` if the buffered response is confident enough to keep.
+pub fn evaluate_buffered_response(text: &str, query_tokens: usize, confidence_threshold: f64) -> bool {
+    !should_escalate(text, query_tokens, confidence_threshold)
 }
 
 /// Evaluate whether a response should be escalated to a stronger model

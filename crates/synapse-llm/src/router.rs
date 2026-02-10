@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use axum::extract::State;
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -12,7 +12,7 @@ use axum::{Json, Router, routing};
 use futures_util::{Stream, StreamExt};
 use synapse_config::{FailoverConfig, LlmConfig, LlmProviderType, RoutingConfig};
 use synapse_core::RequestContext;
-use synapse_routing::ModelRegistry;
+use synapse_routing::{FeedbackTracker, ModelRegistry, RequestFeedback};
 
 use crate::convert;
 use crate::discovery;
@@ -40,6 +40,7 @@ struct LlmStateInner {
     failover: FailoverConfig,
     routing_config: RoutingConfig,
     model_registry: ModelRegistry,
+    feedback: FeedbackTracker,
 }
 
 impl LlmState {
@@ -78,6 +79,7 @@ impl LlmState {
         let routing_config = config.routing.clone();
         let model_registry = ModelRegistry::from_config(&config.routing.models);
         let router = ModelRouter::new(&config);
+        let feedback = FeedbackTracker::new();
 
         // Start background model discovery
         discovery::start_discovery(config, router.known_models());
@@ -90,6 +92,7 @@ impl LlmState {
                 failover,
                 routing_config,
                 model_registry,
+                feedback,
             }),
         })
     }
@@ -142,8 +145,14 @@ impl LlmState {
         // Apply routing class overrides
         let config = self.map_routing_class(routing_class);
 
-        let decision = synapse_routing::route_request(&messages, has_tools, &self.inner.model_registry, &config)
-            .map_err(|e| LlmError::InvalidRequest(format!("routing failed: {e}")))?;
+        let decision = synapse_routing::route_request(
+            &messages,
+            has_tools,
+            &self.inner.model_registry,
+            &config,
+            Some(&self.inner.feedback),
+        )
+        .map_err(|e| LlmError::InvalidRequest(format!("routing failed: {e}")))?;
 
         let provider = self
             .inner
@@ -196,15 +205,32 @@ impl LlmState {
     ) -> Result<CompletionResponse, LlmError> {
         // Try primary provider
         let mut req = request.clone();
-        req.model = model_id.to_owned();
+        model_id.clone_into(&mut req.model);
 
+        let start = Instant::now();
         match provider.complete(&req, context).await {
             Ok(response) => {
                 self.inner.health.record_success(provider_name);
-                return Ok(response);
+                self.inner.feedback.record(&RequestFeedback {
+                    provider: provider_name.to_owned(),
+                    model: model_id.to_owned(),
+                    latency: start.elapsed(),
+                    success: true,
+                    input_tokens: response.usage.as_ref().map(|u| u.prompt_tokens),
+                    output_tokens: response.usage.as_ref().map(|u| u.completion_tokens),
+                });
+                Ok(response)
             }
             Err(e) => {
                 self.inner.health.record_failure(provider_name);
+                self.inner.feedback.record(&RequestFeedback {
+                    provider: provider_name.to_owned(),
+                    model: model_id.to_owned(),
+                    latency: start.elapsed(),
+                    success: false,
+                    input_tokens: None,
+                    output_tokens: None,
+                });
 
                 if !self.inner.failover.enabled || !e.is_retryable() {
                     return Err(e);
@@ -248,7 +274,7 @@ impl LlmState {
                     );
 
                     let mut alt_req = request.clone();
-                    alt_req.model = alt_model.clone();
+                    alt_req.model.clone_from(&alt_model);
 
                     match alt_provider_impl.complete(&alt_req, context).await {
                         Ok(response) => {
@@ -267,7 +293,7 @@ impl LlmState {
                     }
                 }
 
-                return Err(last_error);
+                Err(last_error)
             }
         }
     }
@@ -286,15 +312,33 @@ impl LlmState {
     ) -> Result<(String, Pin<Box<dyn Stream<Item = Result<StreamEvent, LlmError>> + Send>>), LlmError> {
         // Try primary provider
         let mut req = request.clone();
-        req.model = model_id.to_owned();
+        model_id.clone_into(&mut req.model);
 
+        let start = Instant::now();
         match provider.complete_stream(&req, context).await {
             Ok(stream) => {
                 self.inner.health.record_success(provider_name);
-                return Ok((model_id.to_owned(), stream));
+                // Record success feedback for stream initiation
+                self.inner.feedback.record(&RequestFeedback {
+                    provider: provider_name.to_owned(),
+                    model: model_id.to_owned(),
+                    latency: start.elapsed(),
+                    success: true,
+                    input_tokens: None,
+                    output_tokens: None,
+                });
+                Ok((model_id.to_owned(), stream))
             }
             Err(e) => {
                 self.inner.health.record_failure(provider_name);
+                self.inner.feedback.record(&RequestFeedback {
+                    provider: provider_name.to_owned(),
+                    model: model_id.to_owned(),
+                    latency: start.elapsed(),
+                    success: false,
+                    input_tokens: None,
+                    output_tokens: None,
+                });
 
                 if !self.inner.failover.enabled || !e.is_retryable() {
                     return Err(e);
@@ -333,7 +377,7 @@ impl LlmState {
                     );
 
                     let mut alt_req = request.clone();
-                    alt_req.model = alt_model.clone();
+                    alt_req.model.clone_from(&alt_model);
 
                     match alt_provider_impl.complete_stream(&alt_req, context).await {
                         Ok(stream) => {
@@ -347,9 +391,170 @@ impl LlmState {
                     }
                 }
 
-                return Err(last_error);
+                Err(last_error)
             }
         }
+    }
+
+    /// Execute a streaming cascade: buffer initial model's response, evaluate
+    /// confidence, then either replay the buffer or re-request with the
+    /// escalation model
+    async fn complete_stream_with_cascade(
+        &self,
+        request: &CompletionRequest,
+        context: &RequestContext,
+        provider_name: &str,
+        model_id: &str,
+        provider: &Arc<dyn Provider>,
+        cascade_config: &synapse_config::CascadeConfig,
+    ) -> Result<(String, Pin<Box<dyn Stream<Item = Result<StreamEvent, LlmError>> + Send>>), LlmError> {
+        // Get the escalation model from the routing decision's alternatives
+        let escalation = self.resolve_escalation_model(cascade_config)?;
+
+        // Stream from the initial (cheap) model
+        let (initial_model, mut stream) = self
+            .complete_stream_with_failover(request, context, provider_name, model_id, provider)
+            .await?;
+
+        // Buffer stream events, collecting text content
+        let mut buffered_events: Vec<StreamEvent> = Vec::new();
+        let mut buffered_text = String::new();
+        let mut buffer_bytes: usize = 0;
+        let mut committed = false;
+
+        let timeout = tokio::time::Duration::from_secs(cascade_config.buffer_timeout_secs);
+        let deadline = tokio::time::Instant::now() + timeout;
+
+        loop {
+            let next = tokio::time::timeout_at(deadline, stream.next()).await;
+
+            match next {
+                // Timeout fired — commit to initial model
+                Err(_elapsed) => {
+                    tracing::debug!(
+                        model = %initial_model,
+                        buffered_bytes = buffer_bytes,
+                        "cascade buffer timeout, committing to initial model"
+                    );
+                    committed = true;
+                    break;
+                }
+                // Stream ended
+                Ok(None) => break,
+                // Stream error — propagate
+                Ok(Some(Err(e))) => return Err(e),
+                // Stream event
+                Ok(Some(Ok(event))) => {
+                    // Track buffer size
+                    if let StreamEvent::Delta(ref delta) = event
+                        && let Some(ref content) = delta.content
+                    {
+                        buffer_bytes += content.len();
+                        buffered_text.push_str(content);
+                    }
+
+                    buffered_events.push(event.clone());
+
+                    // If buffer limit exceeded, commit
+                    if buffer_bytes >= cascade_config.max_buffer_bytes {
+                        tracing::debug!(
+                            model = %initial_model,
+                            buffered_bytes = buffer_bytes,
+                            "cascade buffer limit exceeded, committing to initial model"
+                        );
+                        committed = true;
+                        break;
+                    }
+
+                    // Done event means stream completed
+                    if matches!(event, StreamEvent::Done) {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // If committed early (buffer limit or timeout), replay buffer + remaining stream
+        if committed {
+            let remaining = stream;
+            let replay: Vec<Result<StreamEvent, LlmError>> = buffered_events.into_iter().map(Ok).collect();
+            let replay_stream = futures_util::stream::iter(replay);
+            let combined = replay_stream.chain(remaining);
+            return Ok((initial_model, Box::pin(combined)));
+        }
+
+        // Estimate input tokens for confidence check
+        let query_tokens: usize = request
+            .messages
+            .iter()
+            .map(|m| m.content.as_text().len() / 4)
+            .sum();
+
+        // Evaluate confidence on buffered response
+        let is_confident = synapse_routing::strategy::cascade::evaluate_buffered_response(
+            &buffered_text,
+            query_tokens,
+            cascade_config.confidence_threshold,
+        );
+
+        if is_confident {
+            tracing::debug!(
+                model = %initial_model,
+                "cascade: initial model response is confident, replaying buffer"
+            );
+            let replay: Vec<Result<StreamEvent, LlmError>> = buffered_events.into_iter().map(Ok).collect();
+            return Ok((initial_model, Box::pin(futures_util::stream::iter(replay))));
+        }
+
+        // Not confident — escalate to stronger model
+        tracing::info!(
+            initial_model = %initial_model,
+            escalation_provider = %escalation.0,
+            escalation_model = %escalation.1,
+            "cascade: escalating to stronger model"
+        );
+
+        let (esc_provider_name, esc_model_id) = &escalation;
+        let esc_provider = self
+            .inner
+            .providers
+            .get(esc_provider_name)
+            .ok_or_else(|| LlmError::ProviderNotFound {
+                provider: esc_provider_name.clone(),
+            })?;
+
+        self.complete_stream_with_failover(request, context, esc_provider_name, esc_model_id, esc_provider)
+            .await
+    }
+
+    /// Resolve the escalation model for cascade routing
+    fn resolve_escalation_model(
+        &self,
+        cascade_config: &synapse_config::CascadeConfig,
+    ) -> Result<(String, String), LlmError> {
+        if let Some(ref configured) = cascade_config.escalation_model {
+            let (provider, model) = configured
+                .split_once('/')
+                .ok_or_else(|| LlmError::InvalidRequest("invalid escalation model format".to_owned()))?;
+            return Ok((provider.to_owned(), model.to_owned()));
+        }
+
+        // Default to best quality model in registry
+        let best = self
+            .inner
+            .model_registry
+            .best_quality()
+            .ok_or_else(|| LlmError::InvalidRequest("no escalation model available".to_owned()))?;
+        Ok((best.provider.clone(), best.model.clone()))
+    }
+
+    /// Check if the current routing strategy is cascade
+    fn is_cascade_strategy(&self, model: &str) -> bool {
+        if !self.inner.routing_config.enabled || !ROUTING_CLASSES.contains(&model) {
+            return false;
+        }
+        let config = self.map_routing_class(model);
+        matches!(config.strategy, synapse_config::RoutingStrategy::Cascade)
     }
 }
 
@@ -373,6 +578,7 @@ async fn openai_chat_completions(
     Json(wire_request): Json<OpenAiRequest>,
 ) -> Response {
     let is_stream = wire_request.stream.unwrap_or(false);
+    let original_model = wire_request.model.clone();
     let internal_request: CompletionRequest = wire_request.into();
 
     let (provider_name, model_id, provider) =
@@ -382,10 +588,25 @@ async fn openai_chat_completions(
         };
 
     if is_stream {
-        match state
-            .complete_stream_with_failover(&internal_request, &context, &provider_name, &model_id, &provider)
-            .await
-        {
+        // Use streaming cascade when strategy is Cascade
+        let result = if state.is_cascade_strategy(&original_model) {
+            state
+                .complete_stream_with_cascade(
+                    &internal_request,
+                    &context,
+                    &provider_name,
+                    &model_id,
+                    &provider,
+                    &state.inner.routing_config.cascade,
+                )
+                .await
+        } else {
+            state
+                .complete_stream_with_failover(&internal_request, &context, &provider_name, &model_id, &provider)
+                .await
+        };
+
+        match result {
             Ok((actual_model, stream)) => openai_stream_response(stream, actual_model).into_response(),
             Err(e) => error_to_openai_response(e),
         }
@@ -494,6 +715,7 @@ async fn anthropic_messages(
     Json(wire_request): Json<AnthropicRequest>,
 ) -> Response {
     let is_stream = wire_request.stream.unwrap_or(false);
+    let original_model = wire_request.model.clone();
     let internal_request: CompletionRequest = wire_request.into();
 
     let (provider_name, model_id, provider) =
@@ -503,10 +725,24 @@ async fn anthropic_messages(
         };
 
     if is_stream {
-        match state
-            .complete_stream_with_failover(&internal_request, &context, &provider_name, &model_id, &provider)
-            .await
-        {
+        let result = if state.is_cascade_strategy(&original_model) {
+            state
+                .complete_stream_with_cascade(
+                    &internal_request,
+                    &context,
+                    &provider_name,
+                    &model_id,
+                    &provider,
+                    &state.inner.routing_config.cascade,
+                )
+                .await
+        } else {
+            state
+                .complete_stream_with_failover(&internal_request, &context, &provider_name, &model_id, &provider)
+                .await
+        };
+
+        match result {
             Ok((actual_model, stream)) => anthropic_stream_response(stream, actual_model).into_response(),
             Err(e) => error_to_anthropic_response(e),
         }

@@ -1,6 +1,6 @@
 //! Model registry with cost, quality, and capability profiles
 //!
-//! Config-driven profiles analogous to LLMRouter's `llm_data` JSON
+//! Config-driven profiles analogous to `LLMRouter`'s `llm_data` JSON
 //! but sourced from TOML configuration.
 
 use synapse_config::ModelProfileConfig;

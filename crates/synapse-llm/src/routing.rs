@@ -225,10 +225,10 @@ impl ModelRouter {
         for group in groups {
             if group.models.iter().any(|m| m == &key) {
                 for entry in &group.models {
-                    if entry != &key {
-                        if let Some((p, m)) = entry.split_once('/') {
-                            alternatives.push((p.to_owned(), m.to_owned()));
-                        }
+                    if entry != &key
+                        && let Some((p, m)) = entry.split_once('/')
+                    {
+                        alternatives.push((p.to_owned(), m.to_owned()));
                     }
                 }
             }
