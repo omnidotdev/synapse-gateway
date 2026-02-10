@@ -146,6 +146,11 @@ impl LlmState {
         })
     }
 
+    /// List all available models across providers
+    pub async fn list_models(&self) -> Vec<(String, String)> {
+        self.inner.router.list_models().await
+    }
+
     /// Resolve a model name and get the corresponding provider
     ///
     /// Handles both normal model names and virtual routing classes

@@ -6,6 +6,8 @@
 //! endpoints with streaming support
 
 mod client;
+#[cfg(feature = "embedded")]
+mod embedded;
 pub mod error;
 pub mod types;
 

@@ -1,5 +1,7 @@
 use std::fmt;
 use std::pin::Pin;
+#[cfg(feature = "embedded")]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use futures::stream::{self, Stream, StreamExt};
@@ -144,11 +146,16 @@ impl SynapseClient {
 
                 handle_error(response).await?.json().await.map_err(Into::into)
             }
-            // TODO: implement embedded LLM completions
             #[cfg(feature = "embedded")]
-            Backend::Embedded { .. } => Err(SynapseClientError::Config(
-                "embedded LLM not yet implemented".to_owned(),
-            )),
+            Backend::Embedded { state } => {
+                let internal_req = crate::embedded::to_completion_request(req);
+                let context = synapse_core::RequestContext::empty();
+                let response = state
+                    .complete(internal_req, context)
+                    .await
+                    .map_err(crate::embedded::from_llm_error)?;
+                Ok(crate::embedded::from_completion_response(response))
+            }
         }
     }
 
@@ -186,11 +193,16 @@ impl SynapseClient {
 
                 Ok(Box::pin(event_stream))
             }
-            // TODO: implement embedded streaming completions
             #[cfg(feature = "embedded")]
-            Backend::Embedded { .. } => Err(SynapseClientError::Config(
-                "embedded LLM not yet implemented".to_owned(),
-            )),
+            Backend::Embedded { state } => {
+                let internal_req = crate::embedded::to_completion_request(req);
+                let context = synapse_core::RequestContext::empty();
+                let (_, stream) = state
+                    .complete_stream(internal_req, context)
+                    .await
+                    .map_err(crate::embedded::from_llm_error)?;
+                Ok(crate::embedded::stream_to_chat_events(stream))
+            }
         }
     }
 
@@ -215,11 +227,23 @@ impl SynapseClient {
                 let list: ModelList = handle_error(response).await?.json().await?;
                 Ok(list.data)
             }
-            // TODO: implement embedded model listing
             #[cfg(feature = "embedded")]
-            Backend::Embedded { .. } => Err(SynapseClientError::Config(
-                "embedded LLM not yet implemented".to_owned(),
-            )),
+            Backend::Embedded { state } => {
+                let models = state.list_models().await;
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                Ok(models
+                    .into_iter()
+                    .map(|(id, _)| Model {
+                        id,
+                        object: "model".to_owned(),
+                        created: now,
+                        owned_by: "synapse".to_owned(),
+                    })
+                    .collect())
+            }
         }
     }
 
@@ -426,6 +450,26 @@ impl SynapseClient {
                 "feature not available in embedded mode".to_owned(),
             )),
         }
+    }
+}
+
+#[cfg(feature = "embedded")]
+impl SynapseClient {
+    /// Create a client using synapse-llm in-process (no HTTP server needed)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the LLM providers fail to initialize
+    pub async fn embedded(config: synapse_config::LlmConfig) -> Result<Self> {
+        let state = synapse_llm::LlmState::from_config(config)
+            .await
+            .map_err(|e| {
+                SynapseClientError::Config(format!("failed to initialize LLM state: {e}"))
+            })?;
+
+        Ok(Self {
+            backend: Backend::Embedded { state },
+        })
     }
 }
 
