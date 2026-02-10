@@ -36,43 +36,15 @@ async fn openai_chat_completions(
     Json(wire_request): Json<OpenAiRequest>,
 ) -> Response {
     let is_stream = wire_request.stream.unwrap_or(false);
-    let original_model = wire_request.model.clone();
     let internal_request: CompletionRequest = wire_request.into();
 
-    let (provider_name, model_id, provider) =
-        match state.resolve_provider(&internal_request.model, &internal_request).await {
-            Ok(r) => r,
-            Err(e) => return error_to_openai_response(e),
-        };
-
     if is_stream {
-        // Use streaming cascade when strategy is Cascade
-        let result = if state.is_cascade_strategy(&original_model) {
-            state
-                .complete_stream_with_cascade(
-                    &internal_request,
-                    &context,
-                    &provider_name,
-                    &model_id,
-                    &provider,
-                    &state.inner.routing_config.cascade,
-                )
-                .await
-        } else {
-            state
-                .complete_stream_with_failover(&internal_request, &context, &provider_name, &model_id, &provider)
-                .await
-        };
-
-        match result {
+        match state.complete_stream(internal_request, context).await {
             Ok((actual_model, stream)) => openai_stream_response(stream, actual_model).into_response(),
             Err(e) => error_to_openai_response(e),
         }
     } else {
-        match state
-            .complete_with_failover(&internal_request, &context, &provider_name, &model_id, &provider)
-            .await
-        {
+        match state.complete(internal_request, context).await {
             Ok(response) => {
                 let wire_response: OpenAiResponse = response.into();
                 Json(wire_response).into_response()
@@ -173,42 +145,15 @@ async fn anthropic_messages(
     Json(wire_request): Json<AnthropicRequest>,
 ) -> Response {
     let is_stream = wire_request.stream.unwrap_or(false);
-    let original_model = wire_request.model.clone();
     let internal_request: CompletionRequest = wire_request.into();
 
-    let (provider_name, model_id, provider) =
-        match state.resolve_provider(&internal_request.model, &internal_request).await {
-            Ok(r) => r,
-            Err(e) => return error_to_anthropic_response(e),
-        };
-
     if is_stream {
-        let result = if state.is_cascade_strategy(&original_model) {
-            state
-                .complete_stream_with_cascade(
-                    &internal_request,
-                    &context,
-                    &provider_name,
-                    &model_id,
-                    &provider,
-                    &state.inner.routing_config.cascade,
-                )
-                .await
-        } else {
-            state
-                .complete_stream_with_failover(&internal_request, &context, &provider_name, &model_id, &provider)
-                .await
-        };
-
-        match result {
+        match state.complete_stream(internal_request, context).await {
             Ok((actual_model, stream)) => anthropic_stream_response(stream, actual_model).into_response(),
             Err(e) => error_to_anthropic_response(e),
         }
     } else {
-        match state
-            .complete_with_failover(&internal_request, &context, &provider_name, &model_id, &provider)
-            .await
-        {
+        match state.complete(internal_request, context).await {
             Ok(response) => {
                 let wire_response: AnthropicResponse = response.into();
                 Json(wire_response).into_response()
