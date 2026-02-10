@@ -8,7 +8,7 @@ use std::time::Instant;
 use futures_util::{Stream, StreamExt};
 use synapse_config::{FailoverConfig, LlmConfig, LlmProviderType, RoutingConfig};
 use synapse_core::RequestContext;
-use synapse_routing::{FeedbackTracker, ModelRegistry, RequestFeedback};
+use synapse_routing::{FeedbackTracker, ModelRegistry, RequestFeedback, StrategyRegistry};
 
 use crate::discovery;
 use crate::error::LlmError;
@@ -33,6 +33,7 @@ pub(crate) struct LlmStateInner {
     pub(crate) failover: FailoverConfig,
     pub(crate) routing_config: RoutingConfig,
     pub(crate) model_registry: ModelRegistry,
+    pub(crate) strategy_registry: StrategyRegistry,
     pub(crate) feedback: FeedbackTracker,
 }
 
@@ -127,6 +128,7 @@ impl LlmState {
         let failover = config.failover.clone();
         let routing_config = config.routing.clone();
         let model_registry = ModelRegistry::from_config(&config.routing.models);
+        let strategy_registry = StrategyRegistry::from_config(&config.routing);
         let router = ModelRouter::new(&config);
         let feedback = FeedbackTracker::new();
 
@@ -141,6 +143,7 @@ impl LlmState {
                 failover,
                 routing_config,
                 model_registry,
+                strategy_registry,
                 feedback,
             }),
         })
@@ -182,6 +185,8 @@ impl LlmState {
         routing_class: &str,
         request: &CompletionRequest,
     ) -> Result<(String, String, Arc<dyn Provider>), LlmError> {
+        use crate::types::message::{Content, ContentPart, Role};
+
         // Convert internal messages to JSON values for analysis
         let messages: Vec<serde_json::Value> = request
             .messages
@@ -196,14 +201,42 @@ impl LlmState {
 
         let has_tools = request.tools.as_ref().is_some_and(|t| !t.is_empty());
 
+        // Extract conversation signals
+        let message_count = request.messages.len();
+
+        let has_system_prompt = request.messages.iter().any(|m| m.role == Role::System);
+
+        let has_images = request.messages.iter().any(|m| {
+            matches!(&m.content, Content::Parts(parts) if parts.iter().any(|p| matches!(p, ContentPart::Image { .. })))
+        });
+
+        let tool_call_turns = request
+            .messages
+            .iter()
+            .filter(|m| m.role == Role::Assistant && m.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty()))
+            .count();
+
+        let user_message_count = request.messages.iter().filter(|m| m.role == Role::User).count();
+        let is_multi_turn = user_message_count > 1;
+
         // Apply routing class overrides
         let config = self.map_routing_class(routing_class);
 
-        let decision = synapse_routing::route_request(
-            &messages,
+        let input = synapse_routing::AnalysisInput {
+            messages: &messages,
             has_tools,
+            has_images,
+            message_count,
+            has_system_prompt,
+            tool_call_turns,
+            is_multi_turn,
+        };
+
+        let decision = synapse_routing::route_with_strategy_registry(
+            &input,
             &self.inner.model_registry,
             &config,
+            &self.inner.strategy_registry,
             Some(&self.inner.feedback),
         )
         .map_err(|e| LlmError::InvalidRequest(format!("routing failed: {e}")))?;

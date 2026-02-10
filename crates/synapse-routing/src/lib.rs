@@ -20,10 +20,11 @@ pub mod registry;
 pub mod scoring;
 pub mod strategy;
 
-pub use analysis::{QueryProfile, analyze_query};
+pub use analysis::{AnalysisInput, QueryProfile, RequiredCapabilities, analyze_query, analyze_query_structured};
 pub use error::RoutingError;
 pub use feedback::{FeedbackTracker, ModelFeedback, RequestFeedback};
 pub use registry::{ModelProfile, ModelRegistry};
+pub use strategy::{Strategy, StrategyRegistry};
 
 /// The reason a particular model was selected
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,35 +66,78 @@ pub fn route_request(
     config: &synapse_config::RoutingConfig,
     feedback: Option<&FeedbackTracker>,
 ) -> Result<RoutingDecision, RoutingError> {
-    let profile = analyze_query(messages, has_tools);
+    let message_count = messages.len();
+    let has_system_prompt = messages
+        .iter()
+        .any(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"));
+
+    let input = AnalysisInput {
+        messages,
+        has_tools,
+        has_images: false,
+        message_count,
+        has_system_prompt,
+        tool_call_turns: 0,
+        is_multi_turn: false,
+    };
+
+    route_request_structured(&input, registry, config, feedback)
+}
+
+/// Route a request using the configured strategy with structured input
+pub fn route_request_structured(
+    input: &AnalysisInput,
+    registry: &ModelRegistry,
+    config: &synapse_config::RoutingConfig,
+    feedback: Option<&FeedbackTracker>,
+) -> Result<RoutingDecision, RoutingError> {
+    let strategy_registry = StrategyRegistry::from_config(config);
+    route_with_strategy_registry(input, registry, config, &strategy_registry, feedback)
+}
+
+/// Route a request using a pre-built strategy registry
+///
+/// Prefer this when you have a `StrategyRegistry` already (e.g. stored in
+/// application state with custom strategies registered)
+pub fn route_with_strategy_registry(
+    input: &AnalysisInput,
+    registry: &ModelRegistry,
+    config: &synapse_config::RoutingConfig,
+    strategy_registry: &StrategyRegistry,
+    feedback: Option<&FeedbackTracker>,
+) -> Result<RoutingDecision, RoutingError> {
+    let profile = analyze_query_structured(input);
 
     tracing::debug!(
         task_type = ?profile.task_type,
         complexity = ?profile.complexity,
         tokens = profile.estimated_input_tokens,
+        messages = profile.message_count,
         "query analyzed for routing"
     );
 
-    let decision = match config.strategy {
-        synapse_config::RoutingStrategy::Threshold => {
-            strategy::threshold::route(&profile, registry, &config.threshold, feedback)?
-        }
-        synapse_config::RoutingStrategy::Cost => {
-            strategy::cost::route(&profile, registry, &config.cost, feedback)?
-        }
-        synapse_config::RoutingStrategy::Cascade => {
-            strategy::cascade::route(&profile, registry, &config.cascade, feedback)?
-        }
-        synapse_config::RoutingStrategy::Score => {
-            strategy::score::route(&profile, registry, &config.score, feedback)?
-        }
-    };
+    // Filter models by required capabilities
+    let filtered = registry.filtered(&profile.required_capabilities);
+
+    if filtered.profiles().is_empty() {
+        return Err(RoutingError::NoModelAvailable {
+            class: format!("no model satisfies capabilities: {:?}", profile.required_capabilities),
+        });
+    }
+
+    let strategy_name = StrategyRegistry::resolve_name(config);
+    let strategy = strategy_registry.get(strategy_name).ok_or_else(|| RoutingError::NoModelAvailable {
+        class: format!("unknown strategy: {strategy_name}"),
+    })?;
+
+    let decision = strategy.route(&profile, &filtered, feedback)?;
 
     tracing::info!(
         provider = %decision.provider,
         model = %decision.model,
         reason = ?decision.reason,
         alternatives = decision.alternatives.len(),
+        strategy = strategy_name,
         "routing decision made"
     );
 

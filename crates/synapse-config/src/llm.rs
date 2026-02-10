@@ -238,6 +238,8 @@ pub enum RoutingStrategy {
     Cascade,
     /// Multi-objective weighted scoring (quality + cost + latency)
     Score,
+    /// User-registered custom strategy referenced by name
+    Custom(String),
 }
 
 /// Configuration for a model profile used in smart routing

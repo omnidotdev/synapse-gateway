@@ -7,12 +7,19 @@
 
 use synapse_config::ThresholdConfig;
 
-use crate::analysis::{Complexity, QueryProfile};
+use crate::analysis::{Complexity, QueryProfile, RequiredCapabilities};
 use crate::error::RoutingError;
 use crate::feedback::FeedbackTracker;
-use crate::registry::ModelRegistry;
+use crate::registry::{ModelProfile, ModelRegistry};
 use crate::scoring::effective_quality;
 use crate::{RoutingDecision, RoutingReason};
+
+/// Check if a model satisfies the required capabilities
+const fn model_satisfies_caps(profile: &ModelProfile, required: &RequiredCapabilities) -> bool {
+    (!required.tool_calling || profile.tool_calling)
+        && (!required.vision || profile.vision)
+        && (!required.long_context || profile.long_context)
+}
 
 /// Route a query using the threshold strategy
 pub fn route(
@@ -21,30 +28,40 @@ pub fn route(
     config: &ThresholdConfig,
     feedback: Option<&FeedbackTracker>,
 ) -> Result<RoutingDecision, RoutingError> {
-    // If explicit models are configured, use them directly
+    // If explicit models are configured, try to use them directly
     if let (Some(low), Some(high)) = (&config.low_complexity_model, &config.high_complexity_model) {
         let (selected, reason) = match profile.complexity {
             Complexity::Low => (low.clone(), RoutingReason::LowComplexity),
             Complexity::Medium | Complexity::High => (high.clone(), RoutingReason::HighComplexity),
         };
 
-        let (provider, model) = selected.split_once('/').ok_or_else(|| RoutingError::NoModelAvailable {
-            class: "threshold".to_owned(),
-        })?;
+        if let Some((provider, model)) = selected.split_once('/') {
+            // Validate configured model satisfies required capabilities
+            let satisfies = registry
+                .find(provider, model)
+                .is_none_or(|p| model_satisfies_caps(p, &profile.required_capabilities));
 
-        // Build alternatives from the other model
-        let alt = if selected == *low { high } else { low };
-        let alternatives = alt
-            .split_once('/')
-            .map(|(p, m)| vec![(p.to_owned(), m.to_owned())])
-            .unwrap_or_default();
+            if satisfies {
+                let alt = if selected == *low { high } else { low };
+                let alternatives = alt
+                    .split_once('/')
+                    .map(|(p, m)| vec![(p.to_owned(), m.to_owned())])
+                    .unwrap_or_default();
 
-        return Ok(RoutingDecision {
-            provider: provider.to_owned(),
-            model: model.to_owned(),
-            reason,
-            alternatives,
-        });
+                return Ok(RoutingDecision {
+                    provider: provider.to_owned(),
+                    model: model.to_owned(),
+                    reason,
+                    alternatives,
+                });
+            }
+
+            tracing::warn!(
+                configured_model = %selected,
+                capabilities = ?profile.required_capabilities,
+                "configured threshold model lacks required capabilities, falling back to registry"
+            );
+        }
     }
 
     // Fall back to registry-based selection, using feedback-adjusted quality
@@ -84,7 +101,7 @@ pub fn route(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::TaskType;
+    use crate::analysis::{RequiredCapabilities, TaskType};
     use synapse_config::{ModelCapabilities, ModelProfileConfig};
 
     fn test_registry() -> ModelRegistry {
@@ -118,6 +135,9 @@ mod tests {
             task_type: TaskType::SimpleQa,
             complexity: Complexity::Low,
             requires_tool_use: false,
+            required_capabilities: RequiredCapabilities::default(),
+            message_count: 1,
+            has_system_prompt: false,
         };
         let config = ThresholdConfig::default();
         let decision = route(&profile, &registry, &config, None).unwrap();
@@ -133,6 +153,9 @@ mod tests {
             task_type: TaskType::Code,
             complexity: Complexity::High,
             requires_tool_use: false,
+            required_capabilities: RequiredCapabilities::default(),
+            message_count: 1,
+            has_system_prompt: false,
         };
         let config = ThresholdConfig::default();
         let decision = route(&profile, &registry, &config, None).unwrap();

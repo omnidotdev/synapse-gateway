@@ -5,6 +5,8 @@
 
 use synapse_config::ModelProfileConfig;
 
+use crate::analysis::RequiredCapabilities;
+
 /// Runtime model profile with observed metrics
 #[derive(Debug, Clone)]
 pub struct ModelProfile {
@@ -114,6 +116,23 @@ impl ModelRegistry {
         self.by_quality().into_iter().next()
     }
 
+    /// Return a new registry containing only models that satisfy the required capabilities
+    #[must_use]
+    pub fn filtered(&self, required: &RequiredCapabilities) -> Self {
+        let profiles = self
+            .profiles
+            .iter()
+            .filter(|p| {
+                (!required.tool_calling || p.tool_calling)
+                    && (!required.vision || p.vision)
+                    && (!required.long_context || p.long_context)
+            })
+            .cloned()
+            .collect();
+
+        Self { profiles }
+    }
+
     /// Update observed latency for a model
     pub fn update_latency(&mut self, provider: &str, model: &str, latency_p50_ms: f64) {
         if let Some(profile) = self
@@ -183,5 +202,62 @@ mod tests {
         let cost = profile.estimate_cost(1_000_000, 500_000);
         // 1M * 0.15/1M + 0.5M * 0.60/1M = 0.15 + 0.30 = 0.45
         assert!((cost - 0.45).abs() < 0.001);
+    }
+
+    #[test]
+    fn filtered_by_long_context() {
+        let registry = ModelRegistry::from_config(&test_profiles());
+        let caps = RequiredCapabilities {
+            long_context: true,
+            ..RequiredCapabilities::default()
+        };
+        let filtered = registry.filtered(&caps);
+        assert_eq!(filtered.profiles().len(), 1);
+        assert_eq!(filtered.profiles()[0].model, "claude-sonnet-4-20250514");
+    }
+
+    #[test]
+    fn filtered_by_vision() {
+        let registry = ModelRegistry::from_config(&test_profiles());
+        // Both models support vision, so both should pass
+        let caps = RequiredCapabilities {
+            vision: true,
+            ..RequiredCapabilities::default()
+        };
+        let filtered = registry.filtered(&caps);
+        assert_eq!(filtered.profiles().len(), 2);
+    }
+
+    #[test]
+    fn filtered_no_requirements_keeps_all() {
+        let registry = ModelRegistry::from_config(&test_profiles());
+        let caps = RequiredCapabilities::default();
+        let filtered = registry.filtered(&caps);
+        assert_eq!(filtered.profiles().len(), 2);
+    }
+
+    #[test]
+    fn filtered_no_match() {
+        // Add a model that lacks tool calling
+        let profiles = vec![ModelProfileConfig {
+            provider: "local".to_owned(),
+            model: "tiny".to_owned(),
+            context_window: 4096,
+            input_per_mtok: 0.0,
+            output_per_mtok: 0.0,
+            quality: 0.5,
+            capabilities: ModelCapabilities {
+                tool_calling: false,
+                vision: false,
+                long_context: false,
+            },
+        }];
+        let registry = ModelRegistry::from_config(&profiles);
+        let caps = RequiredCapabilities {
+            tool_calling: true,
+            ..RequiredCapabilities::default()
+        };
+        let filtered = registry.filtered(&caps);
+        assert!(filtered.profiles().is_empty());
     }
 }

@@ -107,7 +107,7 @@ fn resolve_latency(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::{Complexity, TaskType};
+    use crate::analysis::{Complexity, RequiredCapabilities, TaskType};
     use synapse_config::{ModelCapabilities, ModelProfileConfig};
 
     fn test_registry() -> ModelRegistry {
@@ -139,6 +139,9 @@ mod tests {
             task_type: TaskType::General,
             complexity: Complexity::Medium,
             requires_tool_use: false,
+            required_capabilities: RequiredCapabilities::default(),
+            message_count: 1,
+            has_system_prompt: false,
         }
     }
 
