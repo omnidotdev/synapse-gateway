@@ -20,6 +20,26 @@ pub struct RequestContext {
 }
 
 impl RequestContext {
+    /// Create a minimal context for embedded (non-HTTP) use
+    ///
+    /// Contains empty headers, no API key, no client identity, and
+    /// default authentication state
+    pub fn empty() -> Self {
+        let (parts, _) = http::Request::builder()
+            .method(http::Method::GET)
+            .uri("/")
+            .body(())
+            .expect("valid minimal request")
+            .into_parts();
+
+        Self {
+            parts,
+            api_key: None,
+            client_identity: None,
+            authentication: Authentication::default(),
+        }
+    }
+
     /// Access request headers
     pub fn headers(&self) -> &http::HeaderMap {
         &self.parts.headers
@@ -106,5 +126,18 @@ impl Claims {
             Value::Bool(b) => Some(b.to_string()),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_context_has_no_auth() {
+        let ctx = RequestContext::empty();
+        assert!(ctx.api_key.is_none());
+        assert!(ctx.client_identity.is_none());
+        assert!(ctx.headers().is_empty());
     }
 }
