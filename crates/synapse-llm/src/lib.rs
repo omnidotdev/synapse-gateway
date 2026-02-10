@@ -9,15 +9,17 @@
 pub mod convert;
 pub mod discovery;
 pub mod error;
+pub mod handler;
 pub mod health;
 pub mod protocol;
 pub mod provider;
-pub mod router;
+pub mod state;
 pub mod routing;
 pub mod types;
 
 pub use error::LlmError;
+pub use handler::llm_router;
 pub use provider::{Provider, ProviderCapabilities};
-pub use router::{LlmState, llm_router};
+pub use state::LlmState;
 pub use routing::{ModelRouter, ResolvedModel};
 pub use types::{CompletionRequest, CompletionResponse, StreamEvent};

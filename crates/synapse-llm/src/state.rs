@@ -1,46 +1,39 @@
-//! Axum route handlers for OpenAI-compatible and Anthropic-compatible endpoints
+//! Core LLM state and provider resolution logic
 
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
-use axum::extract::State;
-use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::response::{IntoResponse, Response};
-use axum::{Json, Router, routing};
 use futures_util::{Stream, StreamExt};
 use synapse_config::{FailoverConfig, LlmConfig, LlmProviderType, RoutingConfig};
 use synapse_core::RequestContext;
 use synapse_routing::{FeedbackTracker, ModelRegistry, RequestFeedback};
 
-use crate::convert;
 use crate::discovery;
 use crate::error::LlmError;
 use crate::health::ProviderHealthTracker;
-use crate::protocol::anthropic::{AnthropicRequest, AnthropicResponse};
-use crate::protocol::openai::{OpenAiModel, OpenAiModelList, OpenAiRequest, OpenAiResponse};
 use crate::provider::Provider;
 use crate::routing::ModelRouter;
 use crate::types::{CompletionRequest, CompletionResponse, StreamEvent};
 
 /// Virtual model names that trigger smart routing
-const ROUTING_CLASSES: &[&str] = &["auto", "fast", "best", "cheap"];
+pub(crate) const ROUTING_CLASSES: &[&str] = &["auto", "fast", "best", "cheap"];
 
 /// Shared state for LLM route handlers
 #[derive(Clone)]
 pub struct LlmState {
-    inner: Arc<LlmStateInner>,
+    pub(crate) inner: Arc<LlmStateInner>,
 }
 
-struct LlmStateInner {
-    router: ModelRouter,
-    providers: HashMap<String, Arc<dyn Provider>>,
-    health: ProviderHealthTracker,
-    failover: FailoverConfig,
-    routing_config: RoutingConfig,
-    model_registry: ModelRegistry,
-    feedback: FeedbackTracker,
+pub(crate) struct LlmStateInner {
+    pub(crate) router: ModelRouter,
+    pub(crate) providers: HashMap<String, Arc<dyn Provider>>,
+    pub(crate) health: ProviderHealthTracker,
+    pub(crate) failover: FailoverConfig,
+    pub(crate) routing_config: RoutingConfig,
+    pub(crate) model_registry: ModelRegistry,
+    pub(crate) feedback: FeedbackTracker,
 }
 
 impl LlmState {
@@ -101,7 +94,7 @@ impl LlmState {
     ///
     /// Handles both normal model names and virtual routing classes
     /// ("auto", "fast", "best", "cheap") when smart routing is enabled.
-    async fn resolve_provider(
+    pub(crate) async fn resolve_provider(
         &self,
         model: &str,
         request: &CompletionRequest,
@@ -195,7 +188,7 @@ impl LlmState {
     }
 
     /// Execute a non-streaming completion with failover support
-    async fn complete_with_failover(
+    pub(crate) async fn complete_with_failover(
         &self,
         request: &CompletionRequest,
         context: &RequestContext,
@@ -302,7 +295,7 @@ impl LlmState {
     ///
     /// Failover is only possible before streaming starts. If the initial
     /// `complete_stream()` call returns an error, alternatives are tried.
-    async fn complete_stream_with_failover(
+    pub(crate) async fn complete_stream_with_failover(
         &self,
         request: &CompletionRequest,
         context: &RequestContext,
@@ -399,7 +392,7 @@ impl LlmState {
     /// Execute a streaming cascade: buffer initial model's response, evaluate
     /// confidence, then either replay the buffer or re-request with the
     /// escalation model
-    async fn complete_stream_with_cascade(
+    pub(crate) async fn complete_stream_with_cascade(
         &self,
         request: &CompletionRequest,
         context: &RequestContext,
@@ -549,296 +542,11 @@ impl LlmState {
     }
 
     /// Check if the current routing strategy is cascade
-    fn is_cascade_strategy(&self, model: &str) -> bool {
+    pub(crate) fn is_cascade_strategy(&self, model: &str) -> bool {
         if !self.inner.routing_config.enabled || !ROUTING_CLASSES.contains(&model) {
             return false;
         }
         let config = self.map_routing_class(model);
         matches!(config.strategy, synapse_config::RoutingStrategy::Cascade)
     }
-}
-
-/// Build the LLM router with all endpoints
-pub fn llm_router(state: LlmState) -> Router {
-    Router::new()
-        // OpenAI-compatible endpoints
-        .route("/v1/chat/completions", routing::post(openai_chat_completions))
-        .route("/v1/models", routing::get(openai_list_models))
-        // Anthropic-compatible endpoint
-        .route("/v1/messages", routing::post(anthropic_messages))
-        .with_state(state)
-}
-
-// -- OpenAI-compatible handlers --
-
-/// Handle `POST /v1/chat/completions`
-async fn openai_chat_completions(
-    State(state): State<LlmState>,
-    axum::Extension(context): axum::Extension<RequestContext>,
-    Json(wire_request): Json<OpenAiRequest>,
-) -> Response {
-    let is_stream = wire_request.stream.unwrap_or(false);
-    let original_model = wire_request.model.clone();
-    let internal_request: CompletionRequest = wire_request.into();
-
-    let (provider_name, model_id, provider) =
-        match state.resolve_provider(&internal_request.model, &internal_request).await {
-            Ok(r) => r,
-            Err(e) => return error_to_openai_response(e),
-        };
-
-    if is_stream {
-        // Use streaming cascade when strategy is Cascade
-        let result = if state.is_cascade_strategy(&original_model) {
-            state
-                .complete_stream_with_cascade(
-                    &internal_request,
-                    &context,
-                    &provider_name,
-                    &model_id,
-                    &provider,
-                    &state.inner.routing_config.cascade,
-                )
-                .await
-        } else {
-            state
-                .complete_stream_with_failover(&internal_request, &context, &provider_name, &model_id, &provider)
-                .await
-        };
-
-        match result {
-            Ok((actual_model, stream)) => openai_stream_response(stream, actual_model).into_response(),
-            Err(e) => error_to_openai_response(e),
-        }
-    } else {
-        match state
-            .complete_with_failover(&internal_request, &context, &provider_name, &model_id, &provider)
-            .await
-        {
-            Ok(response) => {
-                let wire_response: OpenAiResponse = response.into();
-                Json(wire_response).into_response()
-            }
-            Err(e) => error_to_openai_response(e),
-        }
-    }
-}
-
-/// Handle `GET /v1/models`
-async fn openai_list_models(State(state): State<LlmState>) -> Response {
-    let models = state.inner.router.list_models().await;
-
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-
-    let data: Vec<OpenAiModel> = models
-        .into_iter()
-        .map(|(display_name, _model_id)| OpenAiModel {
-            id: display_name,
-            object: "model".to_owned(),
-            created: now,
-            owned_by: "synapse".to_owned(),
-        })
-        .collect();
-
-    let response = OpenAiModelList {
-        object: "list".to_owned(),
-        data,
-    };
-
-    Json(response).into_response()
-}
-
-/// Build a streaming SSE response in `OpenAI` format
-fn openai_stream_response(
-    stream: std::pin::Pin<Box<dyn Stream<Item = Result<StreamEvent, LlmError>> + Send>>,
-    model: String,
-) -> Sse<impl Stream<Item = Result<Event, axum::Error>>> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-
-    let response_id = format!("chatcmpl-{now}");
-
-    let event_stream = stream.map(move |result| match result {
-        Ok(StreamEvent::Delta(delta)) => {
-            let chunk = convert::openai::delta_to_openai_chunk(&delta, &response_id, &model, now);
-            let data = serde_json::to_string(&chunk).unwrap_or_default();
-            Ok(Event::default().data(data))
-        }
-        Ok(StreamEvent::Usage(usage)) => {
-            let chunk = convert::openai::usage_to_openai_chunk(&usage, &response_id, &model, now);
-            let data = serde_json::to_string(&chunk).unwrap_or_default();
-            Ok(Event::default().data(data))
-        }
-        Ok(StreamEvent::Done) => Ok(Event::default().data("[DONE]")),
-        Err(e) => {
-            let error_data = serde_json::json!({
-                "error": {
-                    "message": e.to_string(),
-                    "type": "streaming_error"
-                }
-            });
-            Ok(Event::default().data(error_data.to_string()))
-        }
-    });
-
-    Sse::new(event_stream).keep_alive(KeepAlive::default())
-}
-
-/// Convert an LLM error to an `OpenAI`-style JSON error response
-#[allow(clippy::needless_pass_by_value)]
-fn error_to_openai_response(error: LlmError) -> Response {
-    use synapse_core::HttpError;
-
-    let status = error.status_code();
-    let body = serde_json::json!({
-        "error": {
-            "message": error.client_message(),
-            "type": error.error_type(),
-            "code": serde_json::Value::Null,
-        }
-    });
-
-    (status, Json(body)).into_response()
-}
-
-// -- Anthropic-compatible handler --
-
-/// Handle `POST /v1/messages`
-async fn anthropic_messages(
-    State(state): State<LlmState>,
-    axum::Extension(context): axum::Extension<RequestContext>,
-    Json(wire_request): Json<AnthropicRequest>,
-) -> Response {
-    let is_stream = wire_request.stream.unwrap_or(false);
-    let original_model = wire_request.model.clone();
-    let internal_request: CompletionRequest = wire_request.into();
-
-    let (provider_name, model_id, provider) =
-        match state.resolve_provider(&internal_request.model, &internal_request).await {
-            Ok(r) => r,
-            Err(e) => return error_to_anthropic_response(e),
-        };
-
-    if is_stream {
-        let result = if state.is_cascade_strategy(&original_model) {
-            state
-                .complete_stream_with_cascade(
-                    &internal_request,
-                    &context,
-                    &provider_name,
-                    &model_id,
-                    &provider,
-                    &state.inner.routing_config.cascade,
-                )
-                .await
-        } else {
-            state
-                .complete_stream_with_failover(&internal_request, &context, &provider_name, &model_id, &provider)
-                .await
-        };
-
-        match result {
-            Ok((actual_model, stream)) => anthropic_stream_response(stream, actual_model).into_response(),
-            Err(e) => error_to_anthropic_response(e),
-        }
-    } else {
-        match state
-            .complete_with_failover(&internal_request, &context, &provider_name, &model_id, &provider)
-            .await
-        {
-            Ok(response) => {
-                let wire_response: AnthropicResponse = response.into();
-                Json(wire_response).into_response()
-            }
-            Err(e) => error_to_anthropic_response(e),
-        }
-    }
-}
-
-/// Build a streaming SSE response in Anthropic format
-fn anthropic_stream_response(
-    stream: std::pin::Pin<Box<dyn Stream<Item = Result<StreamEvent, LlmError>> + Send>>,
-    model: String,
-) -> Sse<impl Stream<Item = Result<Event, axum::Error>>> {
-    let response_id = format!("msg_{}", uuid_simple());
-
-    let event_stream = stream.map(move |result| match result {
-        Ok(event) => {
-            let anthropic_events =
-                convert::anthropic::internal_to_anthropic_stream_events(&event, &model, &response_id);
-
-            // Return the first event as SSE
-            anthropic_events.into_iter().next().map_or_else(
-                || Ok(Event::default().comment("")),
-                |anthropic_event| {
-                    let event_type = anthropic_event_type(&anthropic_event);
-                    let data = serde_json::to_string(&anthropic_event).unwrap_or_default();
-                    Ok(Event::default().event(event_type).data(data))
-                },
-            )
-        }
-        Err(e) => {
-            let error_data = serde_json::json!({
-                "type": "error",
-                "error": {
-                    "type": "streaming_error",
-                    "message": e.to_string()
-                }
-            });
-            Ok(Event::default().event("error").data(error_data.to_string()))
-        }
-    });
-
-    Sse::new(event_stream).keep_alive(KeepAlive::default())
-}
-
-/// Convert an LLM error to an Anthropic-style JSON error response
-#[allow(clippy::needless_pass_by_value)]
-fn error_to_anthropic_response(error: LlmError) -> Response {
-    use synapse_core::HttpError;
-
-    let status = error.status_code();
-    let body = serde_json::json!({
-        "type": "error",
-        "error": {
-            "type": error.error_type(),
-            "message": error.client_message(),
-        }
-    });
-
-    (status, Json(body)).into_response()
-}
-
-/// Get the SSE event type name for an Anthropic stream event
-const fn anthropic_event_type(event: &crate::protocol::anthropic::AnthropicStreamEvent) -> &'static str {
-    use crate::protocol::anthropic::AnthropicStreamEvent;
-
-    match event {
-        AnthropicStreamEvent::MessageStart { .. } => "message_start",
-        AnthropicStreamEvent::ContentBlockStart { .. } => "content_block_start",
-        AnthropicStreamEvent::ContentBlockDelta { .. } => "content_block_delta",
-        AnthropicStreamEvent::ContentBlockStop { .. } => "content_block_stop",
-        AnthropicStreamEvent::MessageDelta { .. } => "message_delta",
-        AnthropicStreamEvent::MessageStop => "message_stop",
-        AnthropicStreamEvent::Ping => "ping",
-    }
-}
-
-/// Generate a simple unique ID
-fn uuid_simple() -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let count = COUNTER.fetch_add(1, Ordering::Relaxed);
-
-    format!("{now:x}{count:04x}")
 }
