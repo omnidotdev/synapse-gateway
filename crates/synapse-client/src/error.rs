@@ -30,4 +30,9 @@ pub enum SynapseClientError {
     /// Invalid configuration
     #[error("invalid configuration: {0}")]
     Config(String),
+
+    /// LLM provider error (embedded mode)
+    #[cfg(feature = "embedded")]
+    #[error("LLM error: {0}")]
+    Llm(String),
 }

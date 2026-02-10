@@ -1,8 +1,10 @@
+use std::fmt;
 use std::pin::Pin;
 
 use bytes::Bytes;
 use futures::stream::{self, Stream, StreamExt};
 use reqwest::header::AUTHORIZATION;
+use serde::Deserialize;
 use url::Url;
 
 use crate::error::{Result, SynapseClientError};
@@ -11,12 +13,58 @@ use crate::types::{
     ToolResult, ToolSearchResult, Transcription,
 };
 
-/// Typed HTTP client for the Synapse AI router
+/// Backend mode for the Synapse client
+enum Backend {
+    /// HTTP client talking to a remote Synapse server
+    Remote {
+        base_url: Url,
+        http: reqwest::Client,
+        api_key: Option<String>,
+    },
+    /// In-process synapse-llm (requires `embedded` feature)
+    #[cfg(feature = "embedded")]
+    Embedded {
+        state: synapse_llm::LlmState,
+    },
+}
+
+impl Clone for Backend {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Remote {
+                base_url,
+                http,
+                api_key,
+            } => Self::Remote {
+                base_url: base_url.clone(),
+                http: http.clone(),
+                api_key: api_key.clone(),
+            },
+            #[cfg(feature = "embedded")]
+            Self::Embedded { state } => Self::Embedded {
+                state: state.clone(),
+            },
+        }
+    }
+}
+
+impl fmt::Debug for Backend {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Remote { base_url, .. } => f
+                .debug_struct("Remote")
+                .field("base_url", base_url)
+                .finish_non_exhaustive(),
+            #[cfg(feature = "embedded")]
+            Self::Embedded { .. } => f.debug_struct("Embedded").finish_non_exhaustive(),
+        }
+    }
+}
+
+/// Typed client for the Synapse AI router
 #[derive(Debug, Clone)]
 pub struct SynapseClient {
-    base_url: Url,
-    http: reqwest::Client,
-    api_key: Option<String>,
+    backend: Backend,
 }
 
 impl SynapseClient {
@@ -30,23 +78,41 @@ impl SynapseClient {
             .map_err(|e| SynapseClientError::Config(format!("invalid base URL: {e}")))?;
 
         Ok(Self {
-            base_url,
-            http: reqwest::Client::new(),
-            api_key: None,
+            backend: Backend::Remote {
+                base_url,
+                http: reqwest::Client::new(),
+                api_key: None,
+            },
         })
     }
 
-    /// Set the API key for authentication
+    /// Set the API key for authentication (remote mode only)
     #[must_use]
     pub fn with_api_key(mut self, api_key: String) -> Self {
-        self.api_key = Some(api_key);
+        match &mut self.backend {
+            Backend::Remote {
+                api_key: key,
+                ..
+            } => *key = Some(api_key),
+            #[cfg(feature = "embedded")]
+            Backend::Embedded { .. } => {}
+        }
+
         self
     }
 
-    /// Get the base URL
+    /// Get the base URL (remote mode only)
     #[must_use]
     pub fn base_url(&self) -> &Url {
-        &self.base_url
+        match &self.backend {
+            Backend::Remote { base_url, .. } => base_url,
+            #[cfg(feature = "embedded")]
+            Backend::Embedded { .. } => {
+                // Embedded mode has no remote URL
+                static FALLBACK: std::sync::OnceLock<Url> = std::sync::OnceLock::new();
+                FALLBACK.get_or_init(|| Url::parse("http://localhost").expect("valid fallback URL"))
+            }
+        }
     }
 
     // -- LLM --
@@ -57,21 +123,33 @@ impl SynapseClient {
     ///
     /// Returns an error if the request fails or the response cannot be parsed
     pub async fn chat_completion(&self, req: &ChatRequest) -> Result<ChatResponse> {
-        let url = self.url("/v1/chat/completions");
+        match &self.backend {
+            Backend::Remote {
+                base_url,
+                http,
+                api_key,
+            } => {
+                let url = make_url(base_url, "/v1/chat/completions");
 
-        let mut request = ChatRequest {
-            stream: false,
-            ..req.clone()
-        };
-        request.stream = false;
+                let mut request = ChatRequest {
+                    stream: false,
+                    ..req.clone()
+                };
+                request.stream = false;
 
-        let response = self
-            .request(reqwest::Method::POST, &url)
-            .json(&request)
-            .send()
-            .await?;
+                let response = make_request(http, reqwest::Method::POST, &url, api_key.as_deref())
+                    .json(&request)
+                    .send()
+                    .await?;
 
-        self.handle_error(response).await?.json().await.map_err(Into::into)
+                handle_error(response).await?.json().await.map_err(Into::into)
+            }
+            // TODO: implement embedded LLM completions
+            #[cfg(feature = "embedded")]
+            Backend::Embedded { .. } => Err(SynapseClientError::Config(
+                "embedded LLM not yet implemented".to_owned(),
+            )),
+        }
     }
 
     /// Send a streaming chat completion request
@@ -85,23 +163,35 @@ impl SynapseClient {
         &self,
         req: &ChatRequest,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ChatEvent>> + Send>>> {
-        let url = self.url("/v1/chat/completions");
+        match &self.backend {
+            Backend::Remote {
+                base_url,
+                http,
+                api_key,
+            } => {
+                let url = make_url(base_url, "/v1/chat/completions");
 
-        let mut request = req.clone();
-        request.stream = true;
+                let mut request = req.clone();
+                request.stream = true;
 
-        let response = self
-            .request(reqwest::Method::POST, &url)
-            .json(&request)
-            .send()
-            .await?;
+                let response = make_request(http, reqwest::Method::POST, &url, api_key.as_deref())
+                    .json(&request)
+                    .send()
+                    .await?;
 
-        let response = self.handle_error(response).await?;
-        let byte_stream = response.bytes_stream();
+                let response = handle_error(response).await?;
+                let byte_stream = response.bytes_stream();
 
-        let event_stream = parse_sse_stream(byte_stream);
+                let event_stream = parse_sse_stream(byte_stream);
 
-        Ok(Box::pin(event_stream))
+                Ok(Box::pin(event_stream))
+            }
+            // TODO: implement embedded streaming completions
+            #[cfg(feature = "embedded")]
+            Backend::Embedded { .. } => Err(SynapseClientError::Config(
+                "embedded LLM not yet implemented".to_owned(),
+            )),
+        }
     }
 
     /// List available models
@@ -110,12 +200,27 @@ impl SynapseClient {
     ///
     /// Returns an error if the request fails
     pub async fn list_models(&self) -> Result<Vec<Model>> {
-        let url = self.url("/v1/models");
+        match &self.backend {
+            Backend::Remote {
+                base_url,
+                http,
+                api_key,
+            } => {
+                let url = make_url(base_url, "/v1/models");
 
-        let response = self.request(reqwest::Method::GET, &url).send().await?;
+                let response = make_request(http, reqwest::Method::GET, &url, api_key.as_deref())
+                    .send()
+                    .await?;
 
-        let list: ModelList = self.handle_error(response).await?.json().await?;
-        Ok(list.data)
+                let list: ModelList = handle_error(response).await?.json().await?;
+                Ok(list.data)
+            }
+            // TODO: implement embedded model listing
+            #[cfg(feature = "embedded")]
+            Backend::Embedded { .. } => Err(SynapseClientError::Config(
+                "embedded LLM not yet implemented".to_owned(),
+            )),
+        }
     }
 
     // -- STT --
@@ -131,24 +236,41 @@ impl SynapseClient {
         filename: &str,
         model: &str,
     ) -> Result<Transcription> {
-        let url = self.url("/v1/audio/transcriptions");
+        match &self.backend {
+            Backend::Remote {
+                base_url,
+                http,
+                api_key,
+            } => {
+                let url = make_url(base_url, "/v1/audio/transcriptions");
 
-        let part = reqwest::multipart::Part::bytes(audio.to_vec())
-            .file_name(filename.to_owned())
-            .mime_str("audio/wav")
-            .map_err(|e| SynapseClientError::Config(format!("invalid mime type: {e}")))?;
+                let part = reqwest::multipart::Part::bytes(audio.to_vec())
+                    .file_name(filename.to_owned())
+                    .mime_str("audio/wav")
+                    .map_err(|e| {
+                        SynapseClientError::Config(format!("invalid mime type: {e}"))
+                    })?;
 
-        let form = reqwest::multipart::Form::new()
-            .text("model", model.to_owned())
-            .part("file", part);
+                let form = reqwest::multipart::Form::new()
+                    .text("model", model.to_owned())
+                    .part("file", part);
 
-        let response = self
-            .request(reqwest::Method::POST, &url)
-            .multipart(form)
-            .send()
-            .await?;
+                let response = make_request(http, reqwest::Method::POST, &url, api_key.as_deref())
+                    .multipart(form)
+                    .send()
+                    .await?;
 
-        self.handle_error(response).await?.json().await.map_err(Into::into)
+                handle_error(response)
+                    .await?
+                    .json()
+                    .await
+                    .map_err(Into::into)
+            }
+            #[cfg(feature = "embedded")]
+            Backend::Embedded { .. } => Err(SynapseClientError::Config(
+                "feature not available in embedded mode".to_owned(),
+            )),
+        }
     }
 
     // -- TTS --
@@ -161,15 +283,26 @@ impl SynapseClient {
     ///
     /// Returns an error if the request fails
     pub async fn synthesize(&self, req: &SpeechRequest) -> Result<Bytes> {
-        let url = self.url("/v1/audio/speech");
+        match &self.backend {
+            Backend::Remote {
+                base_url,
+                http,
+                api_key,
+            } => {
+                let url = make_url(base_url, "/v1/audio/speech");
 
-        let response = self
-            .request(reqwest::Method::POST, &url)
-            .json(req)
-            .send()
-            .await?;
+                let response = make_request(http, reqwest::Method::POST, &url, api_key.as_deref())
+                    .json(req)
+                    .send()
+                    .await?;
 
-        Ok(self.handle_error(response).await?.bytes().await?)
+                Ok(handle_error(response).await?.bytes().await?)
+            }
+            #[cfg(feature = "embedded")]
+            Backend::Embedded { .. } => Err(SynapseClientError::Config(
+                "feature not available in embedded mode".to_owned(),
+            )),
+        }
     }
 
     // -- MCP --
@@ -180,25 +313,36 @@ impl SynapseClient {
     ///
     /// Returns an error if the request fails
     pub async fn list_tools(&self, server: Option<&str>) -> Result<Vec<McpTool>> {
-        let url = self.url("/mcp/tools/list");
+        match &self.backend {
+            Backend::Remote {
+                base_url,
+                http,
+                api_key,
+            } => {
+                #[derive(Deserialize)]
+                struct Resp {
+                    tools: Vec<McpTool>,
+                }
 
-        let body = serde_json::json!({
-            "server": server,
-        });
+                let url = make_url(base_url, "/mcp/tools/list");
 
-        let response = self
-            .request(reqwest::Method::POST, &url)
-            .json(&body)
-            .send()
-            .await?;
+                let body = serde_json::json!({
+                    "server": server,
+                });
 
-        #[derive(Deserialize)]
-        struct Resp {
-            tools: Vec<McpTool>,
+                let response = make_request(http, reqwest::Method::POST, &url, api_key.as_deref())
+                    .json(&body)
+                    .send()
+                    .await?;
+
+                let resp: Resp = handle_error(response).await?.json().await?;
+                Ok(resp.tools)
+            }
+            #[cfg(feature = "embedded")]
+            Backend::Embedded { .. } => Err(SynapseClientError::Config(
+                "feature not available in embedded mode".to_owned(),
+            )),
         }
-
-        let resp: Resp = self.handle_error(response).await?.json().await?;
-        Ok(resp.tools)
     }
 
     /// Call an MCP tool
@@ -211,20 +355,35 @@ impl SynapseClient {
         name: &str,
         arguments: serde_json::Value,
     ) -> Result<ToolResult> {
-        let url = self.url("/mcp/tools/call");
+        match &self.backend {
+            Backend::Remote {
+                base_url,
+                http,
+                api_key,
+            } => {
+                let url = make_url(base_url, "/mcp/tools/call");
 
-        let body = serde_json::json!({
-            "name": name,
-            "arguments": arguments,
-        });
+                let body = serde_json::json!({
+                    "name": name,
+                    "arguments": arguments,
+                });
 
-        let response = self
-            .request(reqwest::Method::POST, &url)
-            .json(&body)
-            .send()
-            .await?;
+                let response = make_request(http, reqwest::Method::POST, &url, api_key.as_deref())
+                    .json(&body)
+                    .send()
+                    .await?;
 
-        self.handle_error(response).await?.json().await.map_err(Into::into)
+                handle_error(response)
+                    .await?
+                    .json()
+                    .await
+                    .map_err(Into::into)
+            }
+            #[cfg(feature = "embedded")]
+            Backend::Embedded { .. } => Err(SynapseClientError::Config(
+                "feature not available in embedded mode".to_owned(),
+            )),
+        }
     }
 
     /// Search MCP tools by query
@@ -237,58 +396,80 @@ impl SynapseClient {
         query: &str,
         limit: Option<usize>,
     ) -> Result<Vec<ToolSearchResult>> {
-        let mut url = self.url("/mcp/search");
-        url.query_pairs_mut().append_pair("q", query);
-        if let Some(limit) = limit {
-            url.query_pairs_mut()
-                .append_pair("limit", &limit.to_string());
+        match &self.backend {
+            Backend::Remote {
+                base_url,
+                http,
+                api_key,
+            } => {
+                #[derive(Deserialize)]
+                struct Resp {
+                    results: Vec<ToolSearchResult>,
+                }
+
+                let mut url = make_url(base_url, "/mcp/search");
+                url.query_pairs_mut().append_pair("q", query);
+                if let Some(limit) = limit {
+                    url.query_pairs_mut()
+                        .append_pair("limit", &limit.to_string());
+                }
+
+                let response = make_request(http, reqwest::Method::GET, &url, api_key.as_deref())
+                    .send()
+                    .await?;
+
+                let resp: Resp = handle_error(response).await?.json().await?;
+                Ok(resp.results)
+            }
+            #[cfg(feature = "embedded")]
+            Backend::Embedded { .. } => Err(SynapseClientError::Config(
+                "feature not available in embedded mode".to_owned(),
+            )),
         }
+    }
+}
 
-        let response = self.request(reqwest::Method::GET, &url).send().await?;
+// -- Helper functions --
 
-        #[derive(Deserialize)]
-        struct Resp {
-            results: Vec<ToolSearchResult>,
-        }
+/// Build a URL from a base and path
+fn make_url(base_url: &Url, path: &str) -> Url {
+    let mut url = base_url.clone();
+    url.set_path(path);
+    url
+}
 
-        let resp: Resp = self.handle_error(response).await?.json().await?;
-        Ok(resp.results)
+/// Build an authenticated request
+fn make_request(
+    http: &reqwest::Client,
+    method: reqwest::Method,
+    url: &Url,
+    api_key: Option<&str>,
+) -> reqwest::RequestBuilder {
+    let mut builder = http.request(method, url.as_str());
+
+    if let Some(key) = api_key {
+        builder = builder.header(AUTHORIZATION, format!("Bearer {key}"));
     }
 
-    // -- Helpers --
+    builder
+}
 
-    fn url(&self, path: &str) -> Url {
-        let mut url = self.base_url.clone();
-        url.set_path(path);
-        url
+/// Check an HTTP response for errors
+async fn handle_error(response: reqwest::Response) -> Result<reqwest::Response> {
+    let status = response.status();
+    if status.is_success() {
+        return Ok(response);
     }
 
-    fn request(&self, method: reqwest::Method, url: &Url) -> reqwest::RequestBuilder {
-        let mut builder = self.http.request(method, url.as_str());
+    // Try to parse error body
+    let body = response.text().await.unwrap_or_default();
+    let (error_type, message) = parse_error_body(&body);
 
-        if let Some(ref key) = self.api_key {
-            builder = builder.header(AUTHORIZATION, format!("Bearer {key}"));
-        }
-
-        builder
-    }
-
-    async fn handle_error(&self, response: reqwest::Response) -> Result<reqwest::Response> {
-        let status = response.status();
-        if status.is_success() {
-            return Ok(response);
-        }
-
-        // Try to parse error body
-        let body = response.text().await.unwrap_or_default();
-        let (error_type, message) = parse_error_body(&body);
-
-        Err(SynapseClientError::Api {
-            status: status.as_u16(),
-            error_type,
-            message,
-        })
-    }
+    Err(SynapseClientError::Api {
+        status: status.as_u16(),
+        error_type,
+        message,
+    })
 }
 
 /// Parse an error response body into (type, message)
@@ -405,5 +586,3 @@ fn chunk_to_event(chunk: StreamChunk) -> Option<Result<ChatEvent>> {
 
     None
 }
-
-use serde::Deserialize;

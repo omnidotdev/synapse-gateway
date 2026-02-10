@@ -8,6 +8,10 @@ keywords.workspace = true
 repository.workspace = true
 description = "Typed Rust HTTP client for the Synapse AI router"
 
+[features]
+default = []
+embedded = ["dep:synapse-llm", "dep:synapse-config", "dep:synapse-core"]
+
 [dependencies]
 anyhow.workspace = true
 bytes = "1"
@@ -18,6 +22,11 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 url.workspace = true
+
+# Embedded mode dependencies (optional)
+synapse-llm = { workspace = true, optional = true }
+synapse-config = { workspace = true, optional = true }
+synapse-core = { workspace = true, optional = true }
 
 [lints]
 workspace = true
