@@ -56,7 +56,7 @@ async fn openai_chat_completions(
 
 /// Handle `GET /v1/models`
 async fn openai_list_models(State(state): State<LlmState>) -> Response {
-    let models = state.inner.router.list_models().await;
+    let models = state.list_models().await;
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)

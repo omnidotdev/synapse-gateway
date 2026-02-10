@@ -133,11 +133,10 @@ impl SynapseClient {
             } => {
                 let url = make_url(base_url, "/v1/chat/completions");
 
-                let mut request = ChatRequest {
+                let request = ChatRequest {
                     stream: false,
                     ..req.clone()
                 };
-                request.stream = false;
 
                 let response = make_request(http, reqwest::Method::POST, &url, api_key.as_deref())
                     .json(&request)

@@ -107,7 +107,12 @@ pub fn from_completion_response(resp: llm::CompletionResponse) -> types::ChatRes
                         .collect()
                 }),
             },
-            finish_reason: c.finish_reason.map(|r| format!("{r:?}").to_lowercase()),
+            finish_reason: c.finish_reason.map(|r| {
+                serde_json::to_value(&r)
+                    .ok()
+                    .and_then(|v| v.as_str().map(String::from))
+                    .unwrap_or_else(|| format!("{r:?}").to_lowercase())
+            }),
         })
         .collect();
 
