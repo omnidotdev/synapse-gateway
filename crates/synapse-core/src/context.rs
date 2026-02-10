@@ -24,8 +24,14 @@ impl RequestContext {
     ///
     /// Contains empty headers, no API key, no client identity, and
     /// default authentication state
+    ///
+    /// # Panics
+    ///
+    /// Panics if the HTTP request builder fails (should never happen
+    /// with hardcoded valid values)
+    #[must_use]
     pub fn empty() -> Self {
-        let (parts, _) = http::Request::builder()
+        let (parts, ()) = http::Request::builder()
             .method(http::Method::GET)
             .uri("/")
             .body(())

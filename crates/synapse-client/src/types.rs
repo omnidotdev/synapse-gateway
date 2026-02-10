@@ -187,7 +187,7 @@ pub struct FunctionDefinition {
 
 // -- Streaming types --
 
-/// SSE streaming chunk (OpenAI format)
+/// SSE streaming chunk (`OpenAI` format)
 #[derive(Debug, Clone, Deserialize)]
 pub struct StreamChunk {
     /// Chunk identifier
@@ -234,7 +234,7 @@ pub struct StreamDelta {
 /// Tool call within a streaming delta
 #[derive(Debug, Clone, Deserialize)]
 pub struct StreamToolCall {
-    /// Index in the tool_calls array
+    /// Index in the `tool_calls` array
     pub index: u32,
     /// Tool call ID (first chunk only)
     #[serde(default)]
@@ -262,7 +262,7 @@ pub enum ChatEvent {
     ContentDelta(String),
     /// Start of a tool call
     ToolCallStart {
-        /// Index in the tool_calls array
+        /// Index in the `tool_calls` array
         index: u32,
         /// Tool call ID
         id: String,
@@ -271,7 +271,7 @@ pub enum ChatEvent {
     },
     /// Incremental tool call arguments
     ToolCallDelta {
-        /// Index in the tool_calls array
+        /// Index in the `tool_calls` array
         index: u32,
         /// Arguments fragment
         arguments: String,
