@@ -3843,6 +3843,7 @@ dependencies = [
  "synapse-config",
  "synapse-core",
  "synapse-ratelimit",
+ "synapse-routing",
  "synapse-telemetry",
  "thiserror 2.0.16",
  "tiktoken-rs",
@@ -3894,6 +3895,19 @@ dependencies = [
  "synapse-core",
  "thiserror 2.0.16",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "synapse-routing"
+version = "0.1.0"
+dependencies = [
+ "dashmap 6.1.0",
+ "serde",
+ "serde_json",
+ "synapse-config",
+ "thiserror 2.0.16",
+ "tiktoken-rs",
  "tracing",
 ]
 

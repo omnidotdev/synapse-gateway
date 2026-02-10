@@ -1,6 +1,7 @@
 //! Axum route handlers for OpenAI-compatible and Anthropic-compatible endpoints
 
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -9,17 +10,22 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router, routing};
 use futures_util::{Stream, StreamExt};
-use synapse_config::{LlmConfig, LlmProviderType};
+use synapse_config::{FailoverConfig, LlmConfig, LlmProviderType, RoutingConfig};
 use synapse_core::RequestContext;
+use synapse_routing::ModelRegistry;
 
 use crate::convert;
 use crate::discovery;
 use crate::error::LlmError;
+use crate::health::ProviderHealthTracker;
 use crate::protocol::anthropic::{AnthropicRequest, AnthropicResponse};
 use crate::protocol::openai::{OpenAiModel, OpenAiModelList, OpenAiRequest, OpenAiResponse};
 use crate::provider::Provider;
 use crate::routing::ModelRouter;
-use crate::types::{CompletionRequest, StreamEvent};
+use crate::types::{CompletionRequest, CompletionResponse, StreamEvent};
+
+/// Virtual model names that trigger smart routing
+const ROUTING_CLASSES: &[&str] = &["auto", "fast", "best", "cheap"];
 
 /// Shared state for LLM route handlers
 #[derive(Clone)]
@@ -30,6 +36,10 @@ pub struct LlmState {
 struct LlmStateInner {
     router: ModelRouter,
     providers: HashMap<String, Arc<dyn Provider>>,
+    health: ProviderHealthTracker,
+    failover: FailoverConfig,
+    routing_config: RoutingConfig,
+    model_registry: ModelRegistry,
 }
 
 impl LlmState {
@@ -63,18 +73,41 @@ impl LlmState {
             providers.insert(name.clone(), provider);
         }
 
+        let health = ProviderHealthTracker::new(config.failover.circuit_breaker.clone());
+        let failover = config.failover.clone();
+        let routing_config = config.routing.clone();
+        let model_registry = ModelRegistry::from_config(&config.routing.models);
         let router = ModelRouter::new(&config);
 
         // Start background model discovery
         discovery::start_discovery(config, router.known_models());
 
         Ok(Self {
-            inner: Arc::new(LlmStateInner { router, providers }),
+            inner: Arc::new(LlmStateInner {
+                router,
+                providers,
+                health,
+                failover,
+                routing_config,
+                model_registry,
+            }),
         })
     }
 
     /// Resolve a model name and get the corresponding provider
-    async fn resolve_provider(&self, model: &str) -> Result<(String, Arc<dyn Provider>), LlmError> {
+    ///
+    /// Handles both normal model names and virtual routing classes
+    /// ("auto", "fast", "best", "cheap") when smart routing is enabled.
+    async fn resolve_provider(
+        &self,
+        model: &str,
+        request: &CompletionRequest,
+    ) -> Result<(String, String, Arc<dyn Provider>), LlmError> {
+        // Check for virtual routing classes
+        if self.inner.routing_config.enabled && ROUTING_CLASSES.contains(&model) {
+            return self.resolve_via_routing(model, request);
+        }
+
         let resolved = self.inner.router.resolve(model).await?;
         let provider = self
             .inner
@@ -83,7 +116,240 @@ impl LlmState {
             .ok_or_else(|| LlmError::ProviderNotFound {
                 provider: resolved.provider_name.clone(),
             })?;
-        Ok((resolved.model_id, Arc::clone(provider)))
+        Ok((resolved.provider_name.clone(), resolved.model_id, Arc::clone(provider)))
+    }
+
+    /// Resolve a virtual model name via the smart routing system
+    fn resolve_via_routing(
+        &self,
+        routing_class: &str,
+        request: &CompletionRequest,
+    ) -> Result<(String, String, Arc<dyn Provider>), LlmError> {
+        // Convert internal messages to JSON values for analysis
+        let messages: Vec<serde_json::Value> = request
+            .messages
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "role": serde_json::to_value(&m.role).unwrap_or_default(),
+                    "content": m.content.as_text()
+                })
+            })
+            .collect();
+
+        let has_tools = request.tools.as_ref().is_some_and(|t| !t.is_empty());
+
+        // Apply routing class overrides
+        let config = self.map_routing_class(routing_class);
+
+        let decision = synapse_routing::route_request(&messages, has_tools, &self.inner.model_registry, &config)
+            .map_err(|e| LlmError::InvalidRequest(format!("routing failed: {e}")))?;
+
+        let provider = self
+            .inner
+            .providers
+            .get(&decision.provider)
+            .ok_or_else(|| LlmError::ProviderNotFound {
+                provider: decision.provider.clone(),
+            })?;
+
+        tracing::info!(
+            routing_class,
+            provider = %decision.provider,
+            model = %decision.model,
+            reason = ?decision.reason,
+            "smart routing resolved virtual model"
+        );
+
+        Ok((decision.provider, decision.model, Arc::clone(provider)))
+    }
+
+    /// Map a routing class name to an appropriate routing config
+    fn map_routing_class(&self, class: &str) -> RoutingConfig {
+        let mut config = self.inner.routing_config.clone();
+
+        match class {
+            "fast" | "cheap" => {
+                // Force cost strategy for cheap/fast
+                config.strategy = synapse_config::RoutingStrategy::Cost;
+            }
+            "best" => {
+                // Force threshold strategy biased toward high quality
+                config.strategy = synapse_config::RoutingStrategy::Threshold;
+                config.threshold.quality_floor = 0.9;
+            }
+            // "auto" uses whatever strategy is configured
+            _ => {}
+        }
+
+        config
+    }
+
+    /// Execute a non-streaming completion with failover support
+    async fn complete_with_failover(
+        &self,
+        request: &CompletionRequest,
+        context: &RequestContext,
+        provider_name: &str,
+        model_id: &str,
+        provider: &Arc<dyn Provider>,
+    ) -> Result<CompletionResponse, LlmError> {
+        // Try primary provider
+        let mut req = request.clone();
+        req.model = model_id.to_owned();
+
+        match provider.complete(&req, context).await {
+            Ok(response) => {
+                self.inner.health.record_success(provider_name);
+                return Ok(response);
+            }
+            Err(e) => {
+                self.inner.health.record_failure(provider_name);
+
+                if !self.inner.failover.enabled || !e.is_retryable() {
+                    return Err(e);
+                }
+
+                tracing::warn!(
+                    provider = provider_name,
+                    model = model_id,
+                    error = %e,
+                    "primary provider failed, attempting failover"
+                );
+
+                let alternatives = ModelRouter::find_equivalents(
+                    provider_name,
+                    model_id,
+                    &self.inner.failover.equivalence_groups,
+                );
+
+                // max_attempts includes the primary, so remaining = max_attempts - 1
+                let remaining = self.inner.failover.max_attempts.saturating_sub(1);
+                let mut last_error = e;
+
+                for (alt_provider, alt_model) in alternatives.into_iter().take(remaining) {
+                    if !self.inner.health.is_available(&alt_provider) {
+                        tracing::debug!(
+                            provider = %alt_provider,
+                            "skipping unhealthy provider"
+                        );
+                        continue;
+                    }
+
+                    let Some(alt_provider_impl) = self.inner.providers.get(&alt_provider) else {
+                        continue;
+                    };
+
+                    tracing::warn!(
+                        from_provider = provider_name,
+                        to_provider = %alt_provider,
+                        to_model = %alt_model,
+                        "failing over to alternative provider"
+                    );
+
+                    let mut alt_req = request.clone();
+                    alt_req.model = alt_model.clone();
+
+                    match alt_provider_impl.complete(&alt_req, context).await {
+                        Ok(response) => {
+                            self.inner.health.record_success(&alt_provider);
+                            return Ok(response);
+                        }
+                        Err(e) => {
+                            self.inner.health.record_failure(&alt_provider);
+                            tracing::warn!(
+                                provider = %alt_provider,
+                                error = %e,
+                                "failover provider also failed"
+                            );
+                            last_error = e;
+                        }
+                    }
+                }
+
+                return Err(last_error);
+            }
+        }
+    }
+
+    /// Execute a streaming completion with failover support
+    ///
+    /// Failover is only possible before streaming starts. If the initial
+    /// `complete_stream()` call returns an error, alternatives are tried.
+    async fn complete_stream_with_failover(
+        &self,
+        request: &CompletionRequest,
+        context: &RequestContext,
+        provider_name: &str,
+        model_id: &str,
+        provider: &Arc<dyn Provider>,
+    ) -> Result<(String, Pin<Box<dyn Stream<Item = Result<StreamEvent, LlmError>> + Send>>), LlmError> {
+        // Try primary provider
+        let mut req = request.clone();
+        req.model = model_id.to_owned();
+
+        match provider.complete_stream(&req, context).await {
+            Ok(stream) => {
+                self.inner.health.record_success(provider_name);
+                return Ok((model_id.to_owned(), stream));
+            }
+            Err(e) => {
+                self.inner.health.record_failure(provider_name);
+
+                if !self.inner.failover.enabled || !e.is_retryable() {
+                    return Err(e);
+                }
+
+                tracing::warn!(
+                    provider = provider_name,
+                    model = model_id,
+                    error = %e,
+                    "primary provider streaming failed, attempting failover"
+                );
+
+                let alternatives = ModelRouter::find_equivalents(
+                    provider_name,
+                    model_id,
+                    &self.inner.failover.equivalence_groups,
+                );
+
+                let remaining = self.inner.failover.max_attempts.saturating_sub(1);
+                let mut last_error = e;
+
+                for (alt_provider, alt_model) in alternatives.into_iter().take(remaining) {
+                    if !self.inner.health.is_available(&alt_provider) {
+                        continue;
+                    }
+
+                    let Some(alt_provider_impl) = self.inner.providers.get(&alt_provider) else {
+                        continue;
+                    };
+
+                    tracing::warn!(
+                        from_provider = provider_name,
+                        to_provider = %alt_provider,
+                        to_model = %alt_model,
+                        "failing over streaming to alternative provider"
+                    );
+
+                    let mut alt_req = request.clone();
+                    alt_req.model = alt_model.clone();
+
+                    match alt_provider_impl.complete_stream(&alt_req, context).await {
+                        Ok(stream) => {
+                            self.inner.health.record_success(&alt_provider);
+                            return Ok((alt_model, stream));
+                        }
+                        Err(e) => {
+                            self.inner.health.record_failure(&alt_provider);
+                            last_error = e;
+                        }
+                    }
+                }
+
+                return Err(last_error);
+            }
+        }
     }
 }
 
@@ -109,22 +375,25 @@ async fn openai_chat_completions(
     let is_stream = wire_request.stream.unwrap_or(false);
     let internal_request: CompletionRequest = wire_request.into();
 
-    let (model_id, provider) = match state.resolve_provider(&internal_request.model).await {
-        Ok(r) => r,
-        Err(e) => return error_to_openai_response(e),
-    };
-
-    // Update model to the resolved actual model ID
-    let mut request = internal_request;
-    request.model.clone_from(&model_id);
+    let (provider_name, model_id, provider) =
+        match state.resolve_provider(&internal_request.model, &internal_request).await {
+            Ok(r) => r,
+            Err(e) => return error_to_openai_response(e),
+        };
 
     if is_stream {
-        match provider.complete_stream(&request, &context).await {
-            Ok(stream) => openai_stream_response(stream, model_id).into_response(),
+        match state
+            .complete_stream_with_failover(&internal_request, &context, &provider_name, &model_id, &provider)
+            .await
+        {
+            Ok((actual_model, stream)) => openai_stream_response(stream, actual_model).into_response(),
             Err(e) => error_to_openai_response(e),
         }
     } else {
-        match provider.complete(&request, &context).await {
+        match state
+            .complete_with_failover(&internal_request, &context, &provider_name, &model_id, &provider)
+            .await
+        {
             Ok(response) => {
                 let wire_response: OpenAiResponse = response.into();
                 Json(wire_response).into_response()
@@ -227,21 +496,25 @@ async fn anthropic_messages(
     let is_stream = wire_request.stream.unwrap_or(false);
     let internal_request: CompletionRequest = wire_request.into();
 
-    let (model_id, provider) = match state.resolve_provider(&internal_request.model).await {
-        Ok(r) => r,
-        Err(e) => return error_to_anthropic_response(e),
-    };
-
-    let mut request = internal_request;
-    request.model.clone_from(&model_id);
+    let (provider_name, model_id, provider) =
+        match state.resolve_provider(&internal_request.model, &internal_request).await {
+            Ok(r) => r,
+            Err(e) => return error_to_anthropic_response(e),
+        };
 
     if is_stream {
-        match provider.complete_stream(&request, &context).await {
-            Ok(stream) => anthropic_stream_response(stream, model_id).into_response(),
+        match state
+            .complete_stream_with_failover(&internal_request, &context, &provider_name, &model_id, &provider)
+            .await
+        {
+            Ok((actual_model, stream)) => anthropic_stream_response(stream, actual_model).into_response(),
             Err(e) => error_to_anthropic_response(e),
         }
     } else {
-        match provider.complete(&request, &context).await {
+        match state
+            .complete_with_failover(&internal_request, &context, &provider_name, &model_id, &provider)
+            .await
+        {
             Ok(response) => {
                 let wire_response: AnthropicResponse = response.into();
                 Json(wire_response).into_response()

@@ -41,6 +41,19 @@ pub enum LlmError {
     Internal(#[from] anyhow::Error),
 }
 
+impl LlmError {
+    /// Whether this error should trigger a failover attempt
+    ///
+    /// Retryable errors indicate a transient provider issue where trying
+    /// an equivalent model on another provider may succeed.
+    pub const fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::Upstream(_) | Self::Streaming(_) | Self::RateLimited { .. } | Self::Internal(_)
+        )
+    }
+}
+
 impl HttpError for LlmError {
     fn status_code(&self) -> StatusCode {
         match self {

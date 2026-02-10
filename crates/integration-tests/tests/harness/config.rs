@@ -4,8 +4,8 @@ use std::net::SocketAddr;
 
 use secrecy::SecretString;
 use synapse_config::{
-    Config, CorsConfig, CsrfConfig, HealthConfig, LlmConfig, LlmProviderConfig, LlmProviderType, McpConfig,
-    ModelConfig, RateLimitConfig, ServerConfig, SttConfig, TtsConfig,
+    CircuitBreakerConfig, Config, CorsConfig, CsrfConfig, EquivalenceGroup, FailoverConfig, HealthConfig, LlmConfig,
+    LlmProviderConfig, LlmProviderType, McpConfig, ModelConfig, RateLimitConfig, ServerConfig, SttConfig, TtsConfig,
 };
 
 /// Builder for constructing test configurations
@@ -74,6 +74,21 @@ impl ConfigBuilder {
     /// Disable health endpoint
     pub fn without_health(mut self) -> Self {
         self.config.server.health.enabled = false;
+        self
+    }
+
+    /// Enable failover with the given equivalence groups
+    pub fn with_failover(mut self, groups: Vec<EquivalenceGroup>) -> Self {
+        self.config.llm.failover = FailoverConfig {
+            enabled: true,
+            max_attempts: 3,
+            equivalence_groups: groups,
+            circuit_breaker: CircuitBreakerConfig {
+                error_threshold: 5,
+                window_seconds: 60,
+                recovery_seconds: 30,
+            },
+        };
         self
     }
 

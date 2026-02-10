@@ -14,6 +14,12 @@ pub struct LlmConfig {
     /// LLM provider configurations keyed by name
     #[serde(default)]
     pub providers: IndexMap<String, LlmProviderConfig>,
+    /// Failover configuration for automatic provider fallback
+    #[serde(default)]
+    pub failover: FailoverConfig,
+    /// Smart model routing configuration
+    #[serde(default)]
+    pub routing: RoutingConfig,
 }
 
 /// Configuration for a single LLM provider
@@ -106,4 +112,253 @@ pub struct ProviderRateLimit {
     pub requests: u32,
     /// Window duration (e.g. "1m", "1h")
     pub window: String,
+}
+
+// -- Failover configuration --
+
+/// Configuration for automatic provider failover
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FailoverConfig {
+    /// Whether failover is enabled
+    #[serde(default)]
+    pub enabled: bool,
+    /// Maximum number of providers to try (including the primary)
+    #[serde(default = "default_max_attempts")]
+    pub max_attempts: usize,
+    /// Groups of equivalent models that can substitute for each other
+    #[serde(default)]
+    pub equivalence_groups: Vec<EquivalenceGroup>,
+    /// Circuit breaker configuration for provider health tracking
+    #[serde(default)]
+    pub circuit_breaker: CircuitBreakerConfig,
+}
+
+impl Default for FailoverConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_attempts: default_max_attempts(),
+            equivalence_groups: Vec::new(),
+            circuit_breaker: CircuitBreakerConfig::default(),
+        }
+    }
+}
+
+const fn default_max_attempts() -> usize {
+    2
+}
+
+/// A group of models that can substitute for each other during failover
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EquivalenceGroup {
+    /// Human-readable group name (e.g. "frontier", "fast")
+    pub name: String,
+    /// Model identifiers in "provider/model" format
+    pub models: Vec<String>,
+}
+
+/// Circuit breaker configuration for provider health tracking
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CircuitBreakerConfig {
+    /// Number of errors within the window to trip the breaker
+    #[serde(default = "default_error_threshold")]
+    pub error_threshold: u32,
+    /// Sliding window duration in seconds
+    #[serde(default = "default_window_seconds")]
+    pub window_seconds: u64,
+    /// Seconds to wait before probing a tripped provider
+    #[serde(default = "default_recovery_seconds")]
+    pub recovery_seconds: u64,
+}
+
+impl Default for CircuitBreakerConfig {
+    fn default() -> Self {
+        Self {
+            error_threshold: default_error_threshold(),
+            window_seconds: default_window_seconds(),
+            recovery_seconds: default_recovery_seconds(),
+        }
+    }
+}
+
+const fn default_error_threshold() -> u32 {
+    5
+}
+
+const fn default_window_seconds() -> u64 {
+    60
+}
+
+const fn default_recovery_seconds() -> u64 {
+    30
+}
+
+// -- Routing configuration --
+
+/// Smart model routing configuration
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoutingConfig {
+    /// Whether smart routing is enabled
+    #[serde(default)]
+    pub enabled: bool,
+    /// Routing strategy to use
+    #[serde(default)]
+    pub strategy: RoutingStrategy,
+    /// Model profiles for cost/quality scoring
+    #[serde(default)]
+    pub models: Vec<ModelProfileConfig>,
+    /// Threshold strategy configuration
+    #[serde(default)]
+    pub threshold: ThresholdConfig,
+    /// Cost-constrained strategy configuration
+    #[serde(default)]
+    pub cost: CostConfig,
+    /// Cascade strategy configuration
+    #[serde(default)]
+    pub cascade: CascadeConfig,
+}
+
+impl Default for RoutingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            strategy: RoutingStrategy::default(),
+            models: Vec::new(),
+            threshold: ThresholdConfig::default(),
+            cost: CostConfig::default(),
+            cascade: CascadeConfig::default(),
+        }
+    }
+}
+
+/// Available routing strategies
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutingStrategy {
+    /// Route by query complexity: simple queries to cheap models, complex to frontier
+    #[default]
+    Threshold,
+    /// Maximize quality within a cost budget
+    Cost,
+    /// Try cheap model first, escalate if low confidence
+    Cascade,
+}
+
+/// Configuration for a model profile used in smart routing
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelProfileConfig {
+    /// Provider name (key in providers config)
+    pub provider: String,
+    /// Model identifier
+    pub model: String,
+    /// Context window size in tokens
+    #[serde(default)]
+    pub context_window: u32,
+    /// Cost per million input tokens (USD)
+    #[serde(default)]
+    pub input_per_mtok: f64,
+    /// Cost per million output tokens (USD)
+    #[serde(default)]
+    pub output_per_mtok: f64,
+    /// Quality score (0.0 to 1.0), seeded from benchmarks
+    #[serde(default)]
+    pub quality: f64,
+    /// Model capabilities
+    #[serde(default)]
+    pub capabilities: ModelCapabilities,
+}
+
+/// Capabilities a model may support
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelCapabilities {
+    /// Whether the model supports tool/function calling
+    #[serde(default)]
+    pub tool_calling: bool,
+    /// Whether the model supports vision/image inputs
+    #[serde(default)]
+    pub vision: bool,
+    /// Whether the model handles long contexts well
+    #[serde(default)]
+    pub long_context: bool,
+}
+
+/// Configuration for threshold-based routing
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThresholdConfig {
+    /// Model to use for low-complexity queries ("provider/model")
+    #[serde(default)]
+    pub low_complexity_model: Option<String>,
+    /// Model to use for high-complexity queries ("provider/model")
+    #[serde(default)]
+    pub high_complexity_model: Option<String>,
+    /// Minimum quality score to consider a model (0.0 to 1.0)
+    #[serde(default = "default_quality_floor")]
+    pub quality_floor: f64,
+}
+
+impl Default for ThresholdConfig {
+    fn default() -> Self {
+        Self {
+            low_complexity_model: None,
+            high_complexity_model: None,
+            quality_floor: default_quality_floor(),
+        }
+    }
+}
+
+const fn default_quality_floor() -> f64 {
+    0.7
+}
+
+/// Configuration for cost-constrained routing
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CostConfig {
+    /// Maximum cost per request in USD
+    #[serde(default)]
+    pub max_cost_per_request: Option<f64>,
+}
+
+impl Default for CostConfig {
+    fn default() -> Self {
+        Self {
+            max_cost_per_request: None,
+        }
+    }
+}
+
+/// Configuration for cascade routing
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CascadeConfig {
+    /// Initial cheap model to try first ("provider/model")
+    #[serde(default)]
+    pub initial_model: Option<String>,
+    /// Stronger model to escalate to ("provider/model")
+    #[serde(default)]
+    pub escalation_model: Option<String>,
+    /// Confidence threshold below which to escalate (0.0 to 1.0)
+    #[serde(default = "default_confidence_threshold")]
+    pub confidence_threshold: f64,
+}
+
+impl Default for CascadeConfig {
+    fn default() -> Self {
+        Self {
+            initial_model: None,
+            escalation_model: None,
+            confidence_threshold: default_confidence_threshold(),
+        }
+    }
+}
+
+const fn default_confidence_threshold() -> f64 {
+    0.5
 }

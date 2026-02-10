@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use regex::Regex;
-use synapse_config::LlmConfig;
+use synapse_config::{EquivalenceGroup, LlmConfig};
 use tokio::sync::RwLock;
 
 use crate::error::LlmError;
@@ -19,6 +19,8 @@ pub struct ResolvedModel {
     pub provider_name: String,
     /// Actual model identifier to send to the provider
     pub model_id: String,
+    /// Whether the client explicitly specified the provider (e.g. "anthropic/claude-sonnet-4-20250514")
+    pub explicit_provider: bool,
 }
 
 /// Routing-relevant model configuration extracted from a provider
@@ -119,6 +121,7 @@ impl ModelRouter {
             return Ok(ResolvedModel {
                 provider_name: provider_name.to_owned(),
                 model_id: actual_model,
+                explicit_provider: true,
             });
         }
 
@@ -132,6 +135,7 @@ impl ModelRouter {
                 return Ok(ResolvedModel {
                     provider_name: provider_name.clone(),
                     model_id: alias_match,
+                    explicit_provider: false,
                 });
             }
         }
@@ -152,6 +156,7 @@ impl ModelRouter {
                     return Ok(ResolvedModel {
                         provider_name: provider_name.clone(),
                         model_id: model.to_owned(),
+                        explicit_provider: false,
                     });
                 }
             }
@@ -165,6 +170,7 @@ impl ModelRouter {
                 return Ok(ResolvedModel {
                     provider_name: provider_name.clone(),
                     model_id: model.to_owned(),
+                    explicit_provider: false,
                 });
             }
         }
@@ -202,6 +208,33 @@ impl ModelRouter {
         drop(known_models);
 
         result
+    }
+
+    /// Find equivalent models for failover
+    ///
+    /// Given a "provider/model" pair and equivalence groups, returns
+    /// alternative (provider, model) pairs excluding the original.
+    pub fn find_equivalents(
+        provider: &str,
+        model: &str,
+        groups: &[EquivalenceGroup],
+    ) -> Vec<(String, String)> {
+        let key = format!("{provider}/{model}");
+        let mut alternatives = Vec::new();
+
+        for group in groups {
+            if group.models.iter().any(|m| m == &key) {
+                for entry in &group.models {
+                    if entry != &key {
+                        if let Some((p, m)) = entry.split_once('/') {
+                            alternatives.push((p.to_owned(), m.to_owned()));
+                        }
+                    }
+                }
+            }
+        }
+
+        alternatives
     }
 }
 

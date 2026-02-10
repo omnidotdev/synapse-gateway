@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use axum::extract::State;
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::{Json, Router, routing};
 use serde::{Deserialize, Serialize};
@@ -22,14 +23,34 @@ pub struct MockLlm {
 struct MockLlmState {
     request_count: AtomicU32,
     completion_count: AtomicU32,
+    /// Number of requests to fail before succeeding (0 = never fail)
+    fail_count: AtomicU32,
+    /// Custom response content (if set)
+    response_content: Option<String>,
 }
 
 impl MockLlm {
     /// Start the mock server, returning immediately
     pub async fn start() -> anyhow::Result<Self> {
+        Self::start_inner(0, None).await
+    }
+
+    /// Start a mock server that fails the first `n` requests with 500
+    pub async fn start_failing(n: u32) -> anyhow::Result<Self> {
+        Self::start_inner(n, None).await
+    }
+
+    /// Start a mock server with a custom response content
+    pub async fn start_with_response(content: &str) -> anyhow::Result<Self> {
+        Self::start_inner(0, Some(content.to_owned())).await
+    }
+
+    async fn start_inner(fail_count: u32, response_content: Option<String>) -> anyhow::Result<Self> {
         let state = Arc::new(MockLlmState {
             request_count: AtomicU32::new(0),
             completion_count: AtomicU32::new(0),
+            fail_count: AtomicU32::new(fail_count),
+            response_content,
         });
 
         let app = Router::new()
@@ -142,6 +163,27 @@ async fn handle_chat_completions(
     state.request_count.fetch_add(1, Ordering::Relaxed);
     state.completion_count.fetch_add(1, Ordering::Relaxed);
 
+    // If fail_count > 0, decrement and return 500
+    let remaining = state.fail_count.load(Ordering::Relaxed);
+    if remaining > 0 {
+        state.fail_count.fetch_sub(1, Ordering::Relaxed);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": {
+                    "message": "mock server intentional failure",
+                    "type": "server_error"
+                }
+            })),
+        )
+            .into_response();
+    }
+
+    let content = state
+        .response_content
+        .as_deref()
+        .unwrap_or("Hello from mock LLM");
+
     let response = ChatCompletionResponse {
         id: "chatcmpl-test-123".to_owned(),
         object: "chat.completion".to_owned(),
@@ -151,7 +193,7 @@ async fn handle_chat_completions(
             index: 0,
             message: ResponseMessage {
                 role: "assistant".to_owned(),
-                content: "Hello from mock LLM".to_owned(),
+                content: content.to_owned(),
             },
             finish_reason: "stop".to_owned(),
         }],
@@ -162,7 +204,7 @@ async fn handle_chat_completions(
         },
     };
 
-    Json(response)
+    Json(response).into_response()
 }
 
 async fn handle_models(State(state): State<Arc<MockLlmState>>) -> impl IntoResponse {
