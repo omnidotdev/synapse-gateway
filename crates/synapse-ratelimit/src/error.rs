@@ -7,9 +7,9 @@ pub enum RateLimitError {
     #[error("rate limit configuration error: {0}")]
     Config(String),
 
-    /// Redis connection error
-    #[error("redis connection error: {0}")]
-    Redis(String),
+    /// Cache connection error
+    #[error("cache connection error: {0}")]
+    Cache(String),
 
     /// Rate limit exceeded
     #[error("rate limit exceeded")]

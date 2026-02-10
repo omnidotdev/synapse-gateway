@@ -26,15 +26,15 @@ pub enum RateLimitStorage {
     /// In-memory storage (single instance only)
     #[default]
     Memory,
-    /// Redis-backed storage (distributed)
-    Redis(RedisConfig),
+    /// Cache-backed storage (distributed)
+    Cache(CacheConfig),
 }
 
-/// Redis configuration for rate limiting
+/// Cache configuration for rate limiting
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RedisConfig {
-    /// Redis connection URL
+pub struct CacheConfig {
+    /// Cache connection URL
     pub url: Url,
     /// Connection pool size
     #[serde(default = "default_pool_size")]
@@ -44,13 +44,13 @@ pub struct RedisConfig {
     pub connect_timeout: u64,
     /// TLS configuration
     #[serde(default)]
-    pub tls: Option<RedisTlsConfig>,
+    pub tls: Option<CacheTlsConfig>,
 }
 
-/// Redis TLS configuration
+/// Cache TLS configuration
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RedisTlsConfig {
+pub struct CacheTlsConfig {
     /// CA certificate path
     #[serde(default)]
     pub ca_cert: Option<String>,

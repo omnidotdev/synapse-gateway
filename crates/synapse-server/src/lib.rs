@@ -25,7 +25,7 @@ impl Server {
     ///
     /// # Errors
     ///
-    /// Returns an error if subsystem initialization (LLM, MCP) or
+    /// Returns an error if subsystem initialization (LLM, MCP, STT, TTS) or
     /// rate-limiter construction fails
     pub async fn new(config: Config) -> anyhow::Result<Self> {
         let listen_address = config
@@ -33,7 +33,9 @@ impl Server {
             .listen_address
             .unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 3000)));
 
-        // Initialize subsystems
+        // Initialize subsystems (STT/TTS borrow config, so build before LLM consumes it)
+        let stt_state = stt::build_server(&config)?;
+        let tts_state = tts::build_server(&config)?;
         let llm_state = LlmState::from_config(config.llm).await?;
         let mcp_state = Arc::new(McpState::new(&config.mcp).await?);
 
@@ -50,6 +52,12 @@ impl Server {
 
         // MCP routes
         app = app.merge(synapse_mcp::mcp_router(mcp_state));
+
+        // STT routes
+        app = app.merge(stt::endpoint_router().with_state(stt_state));
+
+        // TTS routes
+        app = app.merge(tts::endpoint_router().with_state(tts_state));
 
         // Apply middleware layers (outermost first)
 

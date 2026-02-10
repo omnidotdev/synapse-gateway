@@ -3770,6 +3770,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "synapse-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "futures",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.16",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "synapse-config"
 version = "0.1.0"
 dependencies = [

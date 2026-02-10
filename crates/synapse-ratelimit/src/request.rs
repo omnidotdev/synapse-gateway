@@ -4,7 +4,7 @@ use synapse_config::{RateLimitConfig, RateLimitStorage, RequestRateLimit};
 
 use crate::{
     error::RateLimitError,
-    storage::{memory::MemoryLimiter, redis::RedisLimiter},
+    storage::{cache::CacheLimiter, memory::MemoryLimiter},
 };
 
 /// HTTP request-level rate limiter (global and per-IP)
@@ -15,7 +15,7 @@ pub struct RequestLimiter {
 
 enum Limiter {
     Memory(MemoryLimiter),
-    Redis(RedisLimiter),
+    Cache(CacheLimiter),
 }
 
 impl RequestLimiter {
@@ -58,8 +58,8 @@ fn build_limiter(storage: &RateLimitStorage, rate_limit: &RequestRateLimit) -> R
 
     match storage {
         RateLimitStorage::Memory => Ok(Limiter::Memory(MemoryLimiter::new(rate_limit.requests, window)?)),
-        RateLimitStorage::Redis(redis_config) => Ok(Limiter::Redis(RedisLimiter::new(
-            redis_config.url.as_str(),
+        RateLimitStorage::Cache(cache_config) => Ok(Limiter::Cache(CacheLimiter::new(
+            cache_config.url.as_str(),
             rate_limit.requests,
             window,
         )?)),
@@ -69,7 +69,7 @@ fn build_limiter(storage: &RateLimitStorage, rate_limit: &RequestRateLimit) -> R
 async fn check_limiter(limiter: &Limiter, key: &str) -> Result<(), RateLimitError> {
     match limiter {
         Limiter::Memory(m) => m.check(key),
-        Limiter::Redis(r) => r.check(key).await,
+        Limiter::Cache(r) => r.check(key).await,
     }
 }
 

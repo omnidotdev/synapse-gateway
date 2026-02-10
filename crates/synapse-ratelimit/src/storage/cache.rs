@@ -2,19 +2,19 @@ use std::time::Duration;
 
 use crate::error::RateLimitError;
 
-/// Redis-backed rate limiter using sliding window counters
+/// Cache-backed rate limiter using sliding window counters
 #[derive(Clone)]
-pub struct RedisLimiter {
+pub struct CacheLimiter {
     client: redis::Client,
     max_requests: u32,
     window: Duration,
 }
 
-impl RedisLimiter {
-    /// Create a new Redis-backed rate limiter
+impl CacheLimiter {
+    /// Create a new cache-backed rate limiter
     pub fn new(url: &str, max_requests: u32, window: Duration) -> Result<Self, RateLimitError> {
         let client =
-            redis::Client::open(url).map_err(|e| RateLimitError::Redis(format!("failed to connect to Redis: {e}")))?;
+            redis::Client::open(url).map_err(|e| RateLimitError::Cache(format!("failed to connect: {e}")))?;
 
         Ok(Self {
             client,
@@ -31,7 +31,7 @@ impl RedisLimiter {
             .client
             .get_multiplexed_async_connection()
             .await
-            .map_err(|e| RateLimitError::Redis(format!("failed to get connection: {e}")))?;
+            .map_err(|e| RateLimitError::Cache(format!("failed to get connection: {e}")))?;
 
         let rate_key = format!("synapse:ratelimit:{key}");
         let window_secs = self.window.as_secs().max(1);
@@ -41,21 +41,21 @@ impl RedisLimiter {
             .arg(&rate_key)
             .query_async(&mut conn)
             .await
-            .map_err(|e| RateLimitError::Redis(format!("INCR failed: {e}")))?;
+            .map_err(|e| RateLimitError::Cache(format!("INCR failed: {e}")))?;
 
         // Set expiry on first request in window
         if count == 1 {
             let _: () = conn
                 .expire(&rate_key, i64::try_from(window_secs).unwrap_or(i64::MAX))
                 .await
-                .map_err(|e| RateLimitError::Redis(format!("EXPIRE failed: {e}")))?;
+                .map_err(|e| RateLimitError::Cache(format!("EXPIRE failed: {e}")))?;
         }
 
         if count > self.max_requests {
             let ttl: i64 = conn
                 .ttl(&rate_key)
                 .await
-                .map_err(|e| RateLimitError::Redis(format!("TTL failed: {e}")))?;
+                .map_err(|e| RateLimitError::Cache(format!("TTL failed: {e}")))?;
 
             return Err(RateLimitError::Exceeded {
                 retry_after: u64::try_from(ttl.max(1)).unwrap_or(1),
