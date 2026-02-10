@@ -37,6 +37,62 @@ pub(crate) struct LlmStateInner {
 }
 
 impl LlmState {
+    /// Execute a non-streaming completion with automatic provider
+    /// resolution, smart routing, and failover
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if model resolution or all provider attempts fail
+    pub async fn complete(
+        &self,
+        request: CompletionRequest,
+        context: RequestContext,
+    ) -> Result<CompletionResponse, LlmError> {
+        let (provider_name, model_id, provider) =
+            self.resolve_provider(&request.model, &request).await?;
+
+        self.complete_with_failover(&request, &context, &provider_name, &model_id, &provider)
+            .await
+    }
+
+    /// Execute a streaming completion with automatic provider
+    /// resolution, smart routing, failover, and optional cascade
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if model resolution or all provider attempts fail
+    pub async fn complete_stream(
+        &self,
+        request: CompletionRequest,
+        context: RequestContext,
+    ) -> Result<(String, Pin<Box<dyn Stream<Item = Result<StreamEvent, LlmError>> + Send>>), LlmError>
+    {
+        let original_model = request.model.clone();
+        let (provider_name, model_id, provider) =
+            self.resolve_provider(&request.model, &request).await?;
+
+        if self.is_cascade_strategy(&original_model) {
+            self.complete_stream_with_cascade(
+                &request,
+                &context,
+                &provider_name,
+                &model_id,
+                &provider,
+                &self.inner.routing_config.cascade,
+            )
+            .await
+        } else {
+            self.complete_stream_with_failover(
+                &request,
+                &context,
+                &provider_name,
+                &model_id,
+                &provider,
+            )
+            .await
+        }
+    }
+
     /// Build `LlmState` from configuration, constructing all providers
     ///
     /// # Errors
@@ -548,5 +604,26 @@ impl LlmState {
         }
         let config = self.map_routing_class(model);
         matches!(config.strategy, synapse_config::RoutingStrategy::Cascade)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Verify the public API surface compiles
+    #[test]
+    fn complete_method_exists() {
+        // Type-level check: ensure `complete` method signature is correct
+        fn _assert_complete(state: &LlmState, req: CompletionRequest, ctx: RequestContext) {
+            let _fut = state.complete(req, ctx);
+        }
+    }
+
+    #[test]
+    fn complete_stream_method_exists() {
+        fn _assert_stream(state: &LlmState, req: CompletionRequest, ctx: RequestContext) {
+            let _fut = state.complete_stream(req, ctx);
+        }
     }
 }
