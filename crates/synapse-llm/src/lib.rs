@@ -9,6 +9,7 @@
 pub mod convert;
 pub mod discovery;
 pub mod error;
+#[cfg(feature = "http")]
 pub mod handler;
 pub mod health;
 pub mod protocol;
@@ -18,6 +19,7 @@ pub mod routing;
 pub mod types;
 
 pub use error::LlmError;
+#[cfg(feature = "http")]
 pub use handler::llm_router;
 pub use provider::{Provider, ProviderCapabilities};
 pub use state::LlmState;
