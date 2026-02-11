@@ -21,20 +21,14 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM chef AS builder
 ENV CARGO_INCREMENTAL=0
 COPY --from=planner /synapse/recipe.json recipe.json
-RUN --mount=type=cache,id=synapse-dashboard-cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=synapse-dashboard-cargo-git,target=/usr/local/cargo/git \
-    --mount=type=cache,id=synapse-dashboard-sccache,target=$SCCACHE_DIR,sharing=locked \
-    cargo chef cook --release --recipe-path recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
 
 COPY Cargo.lock Cargo.lock
 COPY Cargo.toml Cargo.toml
 COPY ./crates ./crates
 COPY ./synapse ./synapse
 
-RUN --mount=type=cache,id=synapse-dashboard-cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=synapse-dashboard-cargo-git,target=/usr/local/cargo/git \
-    --mount=type=cache,id=synapse-dashboard-sccache,target=$SCCACHE_DIR,sharing=locked \
-    cargo build --release --bin synapse
+RUN cargo build --release --bin synapse
 
 #
 # === Final image ===
