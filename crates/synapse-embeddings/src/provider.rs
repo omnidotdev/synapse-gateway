@@ -8,7 +8,7 @@ use crate::{
 
 /// Trait for embeddings provider implementations
 #[async_trait]
-pub trait EmbeddingsProvider: Send + Sync {
+pub(crate) trait EmbeddingsProvider: Send + Sync {
     /// Generate embeddings for the given request
     async fn embed(
         &self,

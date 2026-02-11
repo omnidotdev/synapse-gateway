@@ -78,14 +78,14 @@ synapse-billing = { path = "crates/synapse-billing" }
 synapse-client = { path = "crates/synapse-client" }
 synapse-config = { path = "crates/synapse-config" }
 synapse-core = { path = "crates/synapse-core" }
+synapse-embeddings = { version = "0.1.0", path = "crates/synapse-embeddings" }
 synapse-llm = { path = "crates/synapse-llm", default-features = false }
-synapse-routing = { path = "crates/synapse-routing" }
 synapse-mcp = { path = "crates/synapse-mcp" }
 synapse-ratelimit = { path = "crates/synapse-ratelimit" }
+synapse-routing = { path = "crates/synapse-routing" }
 synapse-server = { path = "crates/synapse-server" }
 synapse-telemetry = { path = "crates/synapse-telemetry" }
 stt = { version = "0.1.0", path = "crates/stt" }
-synapse-embeddings = { version = "0.1.0", path = "crates/synapse-embeddings" }
 tts = { version = "0.1.0", path = "crates/tts" }
 tantivy = "0.25.0"
 temp-env = "0.3"
