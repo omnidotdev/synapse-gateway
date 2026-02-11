@@ -3849,6 +3849,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "synapse-embeddings"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "serde",
+ "serde_json",
+ "synapse-core",
+ "thiserror 2.0.16",
+ "tracing",
+]
+
+[[package]]
 name = "synapse-llm"
 version = "0.1.0"
 dependencies = [
