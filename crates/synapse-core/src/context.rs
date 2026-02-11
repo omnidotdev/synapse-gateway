@@ -17,6 +17,8 @@ pub struct RequestContext {
     pub client_identity: Option<ClientIdentity>,
     /// Authentication state from JWT/OAuth validation
     pub authentication: Authentication,
+    /// Billing identity resolved from JWT, if billing is enabled
+    pub billing_identity: Option<BillingIdentity>,
 }
 
 impl RequestContext {
@@ -43,6 +45,7 @@ impl RequestContext {
             api_key: None,
             client_identity: None,
             authentication: Authentication::default(),
+            billing_identity: None,
         }
     }
 
@@ -50,6 +53,26 @@ impl RequestContext {
     pub fn headers(&self) -> &http::HeaderMap {
         &self.parts.headers
     }
+}
+
+/// Billing identity resolved from authentication state
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BillingIdentity {
+    /// Entity type (e.g. "user")
+    pub entity_type: String,
+    /// Entity identifier (e.g. user ID from JWT sub claim)
+    pub entity_id: String,
+    /// Billing mode for this request
+    pub mode: BillingMode,
+}
+
+/// How this request should be billed
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BillingMode {
+    /// User brings their own provider API key (no token metering)
+    Byok,
+    /// Synapse provides the API key and meters usage with margin
+    Managed,
 }
 
 /// Identified client and their group membership

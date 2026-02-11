@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use futures_util::{Stream, StreamExt};
+use secrecy::SecretString;
 use synapse_config::{FailoverConfig, LlmConfig, LlmProviderType, RoutingConfig};
 use synapse_core::RequestContext;
 use synapse_routing::{FeedbackTracker, ModelRegistry, RequestFeedback, StrategyRegistry};
@@ -35,6 +36,13 @@ pub(crate) struct LlmStateInner {
     pub(crate) model_registry: ModelRegistry,
     pub(crate) strategy_registry: StrategyRegistry,
     pub(crate) feedback: FeedbackTracker,
+    /// Managed provider keys (provider name → API key) for managed billing mode
+    pub(crate) managed_keys: HashMap<String, SecretString>,
+    /// Managed provider margins (provider name → margin multiplier)
+    pub(crate) managed_margins: HashMap<String, f64>,
+    /// Usage recorder for billing metering (billing feature only)
+    #[cfg(feature = "billing")]
+    pub(crate) usage_recorder: Option<synapse_billing::UsageRecorder>,
 }
 
 impl LlmState {
@@ -47,13 +55,34 @@ impl LlmState {
     pub async fn complete(
         &self,
         request: CompletionRequest,
-        context: RequestContext,
+        mut context: RequestContext,
     ) -> Result<CompletionResponse, LlmError> {
         let (provider_name, model_id, provider) =
             self.resolve_provider(&request.model, &request).await?;
 
-        self.complete_with_failover(&request, &context, &provider_name, &model_id, &provider)
-            .await
+        // Resolve API key based on billing mode
+        self.resolve_api_key_for_request(&mut context, &provider_name);
+
+        let response = self
+            .complete_with_failover(&request, &context, &provider_name, &model_id, &provider)
+            .await?;
+
+        // Record usage for billing
+        #[cfg(feature = "billing")]
+        if let Some(ref recorder) = self.inner.usage_recorder
+            && let Some(ref usage) = response.usage
+        {
+            dispatch_usage_event(
+                recorder,
+                &context,
+                &provider_name,
+                &model_id,
+                usage.prompt_tokens,
+                usage.completion_tokens,
+            );
+        }
+
+        Ok(response)
     }
 
     /// Execute a streaming completion with automatic provider
@@ -65,14 +94,17 @@ impl LlmState {
     pub async fn complete_stream(
         &self,
         request: CompletionRequest,
-        context: RequestContext,
+        mut context: RequestContext,
     ) -> Result<(String, Pin<Box<dyn Stream<Item = Result<StreamEvent, LlmError>> + Send>>), LlmError>
     {
         let original_model = request.model.clone();
         let (provider_name, model_id, provider) =
             self.resolve_provider(&request.model, &request).await?;
 
-        if self.is_cascade_strategy(&original_model) {
+        // Resolve API key based on billing mode
+        self.resolve_api_key_for_request(&mut context, &provider_name);
+
+        let (actual_model, stream) = if self.is_cascade_strategy(&original_model) {
             self.complete_stream_with_cascade(
                 &request,
                 &context,
@@ -81,7 +113,7 @@ impl LlmState {
                 &provider,
                 &self.inner.routing_config.cascade,
             )
-            .await
+            .await?
         } else {
             self.complete_stream_with_failover(
                 &request,
@@ -90,8 +122,35 @@ impl LlmState {
                 &model_id,
                 &provider,
             )
-            .await
+            .await?
+        };
+
+        // Wrap stream to intercept usage events for billing
+        #[cfg(feature = "billing")]
+        if let Some(ref recorder) = self.inner.usage_recorder {
+            let recorder = recorder.clone();
+            let ctx = context.clone();
+            let prov = provider_name.clone();
+            let mdl = model_id.clone();
+
+            let metered_stream = stream.map(move |item| {
+                if let Ok(StreamEvent::Usage(ref usage)) = item {
+                    dispatch_usage_event(
+                        &recorder,
+                        &ctx,
+                        &prov,
+                        &mdl,
+                        usage.prompt_tokens,
+                        usage.completion_tokens,
+                    );
+                }
+                item
+            });
+
+            return Ok((actual_model, Box::pin(metered_stream)));
         }
+
+        Ok((actual_model, stream))
     }
 
     /// Build `LlmState` from configuration, constructing all providers
@@ -145,8 +204,45 @@ impl LlmState {
                 model_registry,
                 strategy_registry,
                 feedback,
+                managed_keys: HashMap::new(),
+                managed_margins: HashMap::new(),
+                #[cfg(feature = "billing")]
+                usage_recorder: None,
             }),
         })
+    }
+
+    /// Configure managed provider keys for billing
+    ///
+    /// Must be called before the state is shared with handlers.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called after the inner `Arc` has been cloned
+    pub fn set_managed_providers(
+        &mut self,
+        keys: HashMap<String, SecretString>,
+        margins: HashMap<String, f64>,
+    ) {
+        let inner = Arc::get_mut(&mut self.inner)
+            .expect("set_managed_providers must be called before state is shared");
+        inner.managed_keys = keys;
+        inner.managed_margins = margins;
+    }
+
+    /// Attach a usage recorder for billing metering
+    ///
+    /// Must be called before the state is shared with handlers.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called after the inner `Arc` has been cloned (i.e.
+    /// after the state has been shared with route handlers)
+    #[cfg(feature = "billing")]
+    pub fn set_usage_recorder(&mut self, recorder: synapse_billing::UsageRecorder) {
+        Arc::get_mut(&mut self.inner)
+            .expect("set_usage_recorder must be called before state is shared")
+            .usage_recorder = Some(recorder);
     }
 
     /// List all available models across providers
@@ -635,6 +731,41 @@ impl LlmState {
         Ok((best.provider.clone(), best.model.clone()))
     }
 
+    /// Resolve the API key for a request based on billing mode
+    ///
+    /// - BYOK: use the user-provided key from `x-provider-api-key` header
+    /// - Managed: use the managed provider key from billing config
+    /// - No billing identity: leave context unchanged (provider uses its
+    ///   configured key)
+    fn resolve_api_key_for_request(
+        &self,
+        context: &mut RequestContext,
+        provider_name: &str,
+    ) {
+        use synapse_core::BillingMode;
+
+        let Some(ref identity) = context.billing_identity else {
+            return;
+        };
+
+        match identity.mode {
+            BillingMode::Byok => {
+                // Extract user-provided key from the request header
+                if let Some(value) = context.headers().get("x-provider-api-key")
+                    && let Ok(key_str) = value.to_str()
+                {
+                    context.api_key = Some(SecretString::from(key_str.to_owned()));
+                }
+            }
+            BillingMode::Managed => {
+                // Use the managed provider key
+                if let Some(managed_key) = self.inner.managed_keys.get(provider_name) {
+                    context.api_key = Some(managed_key.clone());
+                }
+            }
+        }
+    }
+
     /// Check if the current routing strategy is cascade
     pub(crate) fn is_cascade_strategy(&self, model: &str) -> bool {
         if !self.inner.routing_config.enabled || !ROUTING_CLASSES.contains(&model) {
@@ -643,6 +774,39 @@ impl LlmState {
         let config = self.map_routing_class(model);
         matches!(config.strategy, synapse_config::RoutingStrategy::Cascade)
     }
+}
+
+/// Dispatch a usage event to the billing recorder
+#[cfg(feature = "billing")]
+fn dispatch_usage_event(
+    recorder: &synapse_billing::UsageRecorder,
+    context: &RequestContext,
+    provider_name: &str,
+    model_id: &str,
+    input_tokens: u32,
+    output_tokens: u32,
+) {
+    let Some(ref identity) = context.billing_identity else {
+        return;
+    };
+
+    // Only meter in managed mode (BYOK users use their own keys)
+    if identity.mode == synapse_core::BillingMode::Byok {
+        return;
+    }
+
+    let idempotency_key = uuid::Uuid::new_v4().to_string();
+
+    recorder.record(synapse_billing::UsageEvent {
+        entity_type: identity.entity_type.clone(),
+        entity_id: identity.entity_id.clone(),
+        model: model_id.to_owned(),
+        provider: provider_name.to_owned(),
+        input_tokens,
+        output_tokens,
+        estimated_cost_usd: 0.0, // TODO: calculate from model profiles + margin
+        idempotency_key,
+    });
 }
 
 #[cfg(test)]

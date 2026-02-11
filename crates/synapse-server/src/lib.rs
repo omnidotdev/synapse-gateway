@@ -1,6 +1,9 @@
+mod billing_identity;
 mod client_id;
 mod cors;
 mod csrf;
+mod entitlement;
+mod entitlement_cache;
 mod health;
 mod rate_limit;
 mod request_context;
@@ -36,7 +39,39 @@ impl Server {
         // Initialize subsystems (STT/TTS borrow config, so build before LLM consumes it)
         let stt_state = stt::build_server(&config)?;
         let tts_state = tts::build_server(&config)?;
-        let llm_state = LlmState::from_config(config.llm).await?;
+        let mut llm_state = LlmState::from_config(config.llm).await?;
+
+        // Configure billing for LLM state when enabled
+        if let Some(ref billing_config) = config.billing
+            && billing_config.enabled
+        {
+            // Set managed provider keys
+            use secrecy::SecretString;
+            use std::collections::HashMap;
+
+            let mut managed_keys: HashMap<String, SecretString> = HashMap::new();
+            let mut managed_margins: HashMap<String, f64> = HashMap::new();
+            for (name, provider_config) in &billing_config.managed_providers {
+                managed_keys.insert(name.clone(), provider_config.api_key.clone());
+                managed_margins.insert(name.clone(), provider_config.margin);
+            }
+            llm_state.set_managed_providers(managed_keys, managed_margins);
+
+            // Attach usage recorder
+            let recorder_client = synapse_billing::AetherClient::new(
+                billing_config.aether_url.clone(),
+                billing_config.app_id.clone(),
+                billing_config.service_api_key.clone(),
+            )?;
+            let meter_keys = synapse_billing::MeterKeys {
+                input_tokens: billing_config.meters.input_tokens.clone(),
+                output_tokens: billing_config.meters.output_tokens.clone(),
+                requests: billing_config.meters.requests.clone(),
+            };
+            let recorder = synapse_billing::UsageRecorder::new(recorder_client, meter_keys);
+            llm_state.set_usage_recorder(recorder);
+        }
+
         let mcp_state = Arc::new(McpState::new(&config.mcp).await?);
 
         // Build base router with feature routes
@@ -80,6 +115,17 @@ impl Server {
             }));
         }
 
+        // Billing identity (after OAuth, before ClientId)
+        if let Some(ref billing_config) = config.billing
+            && billing_config.enabled
+        {
+            let billing = billing_config.clone();
+            app = app.layer(axum::middleware::from_fn(move |req, next| {
+                let config = billing.clone();
+                async move { billing_identity::billing_identity_middleware(config, req, next).await }
+            }));
+        }
+
         // Client identification
         if let Some(ref client_id_config) = config.server.client_identification {
             let cid_config = client_id_config.clone();
@@ -95,6 +141,22 @@ impl Server {
             app = app.layer(axum::middleware::from_fn(move |req, next| {
                 let limiter = Arc::clone(&limiter);
                 async move { rate_limit::rate_limit_middleware_arc(limiter, req, next).await }
+            }));
+        }
+
+        // Entitlement gate (after billing identity, before request context)
+        if let Some(ref billing_config) = config.billing
+            && billing_config.enabled
+        {
+            let aether_client = synapse_billing::AetherClient::new(
+                billing_config.aether_url.clone(),
+                billing_config.app_id.clone(),
+                billing_config.service_api_key.clone(),
+            )?;
+            let ent_state = entitlement::EntitlementState::new(aether_client, billing_config.clone());
+            app = app.layer(axum::middleware::from_fn(move |req, next| {
+                let state = ent_state.clone();
+                async move { entitlement::entitlement_middleware(state, req, next).await }
             }));
         }
 

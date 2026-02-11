@@ -13,13 +13,15 @@ axum.workspace = true
 axum-server.workspace = true
 http.workspace = true
 jwt-compact.workspace = true
+mini-moka.workspace = true
 reqwest.workspace = true
 secrecy.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+synapse-billing.workspace = true
 synapse-config.workspace = true
 synapse-core.workspace = true
-synapse-llm = { workspace = true, features = ["http"] }
+synapse-llm = { workspace = true, features = ["http", "billing"] }
 synapse-mcp.workspace = true
 synapse-ratelimit.workspace = true
 synapse-telemetry.workspace = true

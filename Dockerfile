@@ -60,7 +60,6 @@ USER synapse
 
 COPY --from=builder /synapse/target/release/synapse /bin/synapse
 
-VOLUME /data
 WORKDIR /data
 
 ENTRYPOINT ["/bin/synapse"]

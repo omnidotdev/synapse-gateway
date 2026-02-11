@@ -32,6 +32,7 @@ impl ConfigBuilder {
                 tts: TtsConfig::default(),
                 telemetry: None,
                 proxy: None,
+                billing: None,
             },
         }
     }

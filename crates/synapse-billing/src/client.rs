@@ -1,0 +1,402 @@
+use std::collections::HashMap;
+
+use secrecy::{ExposeSecret, SecretString};
+use url::Url;
+
+use crate::error::BillingError;
+use crate::types::{
+    CheckUsageResponse, EntitlementCheckResponse, EntitlementsResponse, RecordUsageRequest,
+    RecordUsageResponse,
+};
+
+/// Async HTTP client for the Aether billing API
+#[derive(Clone)]
+pub struct AetherClient {
+    http: reqwest::Client,
+    base_url: Url,
+    app_id: String,
+    service_api_key: SecretString,
+}
+
+impl AetherClient {
+    /// Create a new Aether client
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP client cannot be built
+    pub fn new(base_url: Url, app_id: String, service_api_key: SecretString) -> Result<Self, BillingError> {
+        let http = reqwest::Client::builder()
+            .build()
+            .map_err(BillingError::Request)?;
+
+        Ok(Self {
+            http,
+            base_url,
+            app_id,
+            service_api_key,
+        })
+    }
+
+    /// Record usage against a meter
+    ///
+    /// POST `/usage/:appId/:entityType/:entityId/:meterKey/record`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or Aether returns an error
+    pub async fn record_usage(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+        meter_key: &str,
+        delta: f64,
+        idempotency_key: &str,
+        metadata: HashMap<String, String>,
+    ) -> Result<RecordUsageResponse, BillingError> {
+        let url = self
+            .base_url
+            .join(&format!(
+                "usage/{}/{entity_type}/{entity_id}/{meter_key}/record",
+                self.app_id
+            ))
+            .map_err(|e| BillingError::Api {
+                status: 0,
+                message: format!("invalid URL: {e}"),
+            })?;
+
+        let body = RecordUsageRequest {
+            delta,
+            idempotency_key: idempotency_key.to_owned(),
+            metadata,
+        };
+
+        let response = self
+            .http
+            .post(url)
+            .header("x-service-api-key", self.service_api_key.expose_secret())
+            .json(&body)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            Ok(response.json().await?)
+        } else {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            Err(BillingError::Api { status, message })
+        }
+    }
+
+    /// Check whether additional usage is within limits
+    ///
+    /// GET `/usage/:appId/:entityType/:entityId/:meterKey/check`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or Aether returns an error
+    pub async fn check_usage(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+        meter_key: &str,
+        additional_usage: f64,
+    ) -> Result<CheckUsageResponse, BillingError> {
+        let url = self
+            .base_url
+            .join(&format!(
+                "usage/{}/{entity_type}/{entity_id}/{meter_key}/check",
+                self.app_id
+            ))
+            .map_err(|e| BillingError::Api {
+                status: 0,
+                message: format!("invalid URL: {e}"),
+            })?;
+
+        let response = self
+            .http
+            .get(url)
+            .header("x-service-api-key", self.service_api_key.expose_secret())
+            .query(&[("additional_usage", additional_usage.to_string())])
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            Ok(response.json().await?)
+        } else {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            Err(BillingError::Api { status, message })
+        }
+    }
+
+    /// Check whether an entity has access to a feature
+    ///
+    /// GET `/entitlements/:appId/:entityType/:entityId/:featureKey/check`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or Aether returns an error
+    pub async fn check_entitlement(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+        feature_key: &str,
+    ) -> Result<EntitlementCheckResponse, BillingError> {
+        let url = self
+            .base_url
+            .join(&format!(
+                "entitlements/{}/{entity_type}/{entity_id}/{feature_key}/check",
+                self.app_id
+            ))
+            .map_err(|e| BillingError::Api {
+                status: 0,
+                message: format!("invalid URL: {e}"),
+            })?;
+
+        let response = self
+            .http
+            .get(url)
+            .header("x-service-api-key", self.service_api_key.expose_secret())
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            Ok(response.json().await?)
+        } else {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            Err(BillingError::Api { status, message })
+        }
+    }
+
+    /// Retrieve all entitlements for an entity
+    ///
+    /// GET `/entitlements/:appId/:entityType/:entityId`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or Aether returns an error
+    pub async fn get_entitlements(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+    ) -> Result<EntitlementsResponse, BillingError> {
+        let url = self
+            .base_url
+            .join(&format!(
+                "entitlements/{}/{entity_type}/{entity_id}",
+                self.app_id
+            ))
+            .map_err(|e| BillingError::Api {
+                status: 0,
+                message: format!("invalid URL: {e}"),
+            })?;
+
+        let response = self
+            .http
+            .get(url)
+            .header("x-service-api-key", self.service_api_key.expose_secret())
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            Ok(response.json().await?)
+        } else {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            Err(BillingError::Api { status, message })
+        }
+    }
+
+    /// Check connectivity to Aether
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if Aether is unreachable
+    pub async fn health(&self) -> Result<(), BillingError> {
+        let url = self
+            .base_url
+            .join("health")
+            .map_err(|e| BillingError::Api {
+                status: 0,
+                message: format!("invalid URL: {e}"),
+            })?;
+
+        let response = self
+            .http
+            .get(url)
+            .header("x-service-api-key", self.service_api_key.expose_secret())
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            Err(BillingError::Api { status, message })
+        }
+    }
+}
+
+impl std::fmt::Debug for AetherClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AetherClient")
+            .field("base_url", &self.base_url)
+            .field("app_id", &self.app_id)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn test_client(base_url: &str) -> AetherClient {
+        AetherClient::new(
+            Url::parse(base_url).unwrap(),
+            "test-app".to_owned(),
+            SecretString::from("test-key".to_owned()),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn record_usage_sends_correct_request() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/usage/test-app/user/usr_123/input_tokens/record"))
+            .and(header("x-service-api-key", "test-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "accepted": true
+            })))
+            .mount(&server)
+            .await;
+
+        let client = test_client(&format!("{}/", server.uri()));
+
+        let result = client
+            .record_usage("user", "usr_123", "input_tokens", 1500.0, "idem-1", HashMap::new())
+            .await;
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().accepted);
+    }
+
+    #[tokio::test]
+    async fn check_usage_returns_allowed() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/usage/test-app/user/usr_123/input_tokens/check"))
+            .and(header("x-service-api-key", "test-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "allowed": true,
+                "current_usage": 5000.0,
+                "limit": 100_000.0
+            })))
+            .mount(&server)
+            .await;
+
+        let client = test_client(&format!("{}/", server.uri()));
+
+        let result = client.check_usage("user", "usr_123", "input_tokens", 1000.0).await;
+
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert!(resp.allowed);
+        assert!((resp.current_usage - 5000.0).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn check_entitlement_returns_access() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/entitlements/test-app/user/usr_123/api_access/check"))
+            .and(header("x-service-api-key", "test-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "has_access": true,
+                "entitlement_version": 42
+            })))
+            .mount(&server)
+            .await;
+
+        let client = test_client(&format!("{}/", server.uri()));
+
+        let result = client
+            .check_entitlement("user", "usr_123", "api_access")
+            .await;
+
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert!(resp.has_access);
+        assert_eq!(resp.entitlement_version, Some(42));
+    }
+
+    #[tokio::test]
+    async fn api_error_returns_billing_error() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/entitlements/test-app/user/usr_123/api_access/check"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("internal server error"))
+            .mount(&server)
+            .await;
+
+        let client = test_client(&format!("{}/", server.uri()));
+
+        let result = client
+            .check_entitlement("user", "usr_123", "api_access")
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, BillingError::Api { status: 500, .. }));
+    }
+
+    #[tokio::test]
+    async fn health_check_succeeds() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/health"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let client = test_client(&format!("{}/", server.uri()));
+
+        assert!(client.health().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn get_entitlements_returns_map() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/entitlements/test-app/user/usr_123"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "entitlements": {
+                    "api_access": true,
+                    "premium_models": false
+                },
+                "entitlement_version": 5
+            })))
+            .mount(&server)
+            .await;
+
+        let client = test_client(&format!("{}/", server.uri()));
+
+        let result = client.get_entitlements("user", "usr_123").await;
+
+        assert!(result.is_ok());
+        let resp = result.unwrap();
+        assert_eq!(resp.entitlements.get("api_access"), Some(&true));
+        assert_eq!(resp.entitlements.get("premium_models"), Some(&false));
+    }
+}
