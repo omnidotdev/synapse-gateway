@@ -1,3 +1,5 @@
+pub(crate) mod openai;
+
 use async_trait::async_trait;
 use synapse_core::RequestContext;
 

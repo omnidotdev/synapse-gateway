@@ -3854,10 +3854,13 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
+ "reqwest",
+ "secrecy",
  "serde",
  "serde_json",
  "synapse-core",
  "thiserror 2.0.16",
+ "tracing",
 ]
 
 [[package]]
