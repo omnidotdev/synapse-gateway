@@ -24,6 +24,7 @@ pub use analysis::{AnalysisInput, QueryProfile, RequiredCapabilities, analyze_qu
 pub use error::RoutingError;
 pub use feedback::{FeedbackTracker, ModelFeedback, RequestFeedback};
 pub use registry::{ModelProfile, ModelRegistry};
+pub use strategy::failover::FailoverState;
 pub use strategy::{Strategy, StrategyRegistry};
 
 /// The reason a particular model was selected

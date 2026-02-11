@@ -16,4 +16,12 @@ pub enum RoutingError {
     /// Query analysis failed
     #[error("query analysis failed: {0}")]
     AnalysisFailed(String),
+
+    /// All providers are currently unhealthy
+    #[error("all providers are currently down")]
+    AllProvidersDown,
+
+    /// Feature not available in this build
+    #[error("feature not available: {feature}")]
+    FeatureNotAvailable { feature: String },
 }

@@ -12,6 +12,8 @@ use crate::RoutingDecision;
 
 pub mod cascade;
 pub mod cost;
+pub mod failover;
+pub mod onnx;
 pub mod score;
 pub mod threshold;
 
