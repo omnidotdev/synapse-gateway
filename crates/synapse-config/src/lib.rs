@@ -5,6 +5,7 @@ pub mod client_identification;
 pub mod client_ip;
 pub mod cors;
 pub mod csrf;
+pub mod embeddings;
 mod env;
 pub mod headers;
 pub mod health;
@@ -26,6 +27,7 @@ pub use billing::*;
 pub use client_identification::*;
 pub use cors::*;
 pub use csrf::*;
+pub use embeddings::*;
 pub use headers::*;
 pub use health::*;
 pub use llm::*;
@@ -52,6 +54,9 @@ pub struct Config {
     /// MCP server configuration
     #[serde(default)]
     pub mcp: McpConfig,
+    /// Embeddings provider configuration
+    #[serde(default)]
+    pub embeddings: EmbeddingsConfig,
     /// STT provider configuration
     #[serde(default)]
     pub stt: SttConfig,

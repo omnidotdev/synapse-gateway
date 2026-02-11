@@ -3852,12 +3852,14 @@ dependencies = [
 name = "synapse-embeddings"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "axum",
  "reqwest",
  "secrecy",
  "serde",
  "serde_json",
+ "synapse-config",
  "synapse-core",
  "thiserror 2.0.16",
  "tracing",
@@ -3978,6 +3980,7 @@ dependencies = [
  "synapse-billing",
  "synapse-config",
  "synapse-core",
+ "synapse-embeddings",
  "synapse-llm",
  "synapse-mcp",
  "synapse-ratelimit",

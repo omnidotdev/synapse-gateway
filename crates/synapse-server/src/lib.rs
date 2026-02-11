@@ -36,9 +36,10 @@ impl Server {
             .listen_address
             .unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 3000)));
 
-        // Initialize subsystems (STT/TTS borrow config, so build before LLM consumes it)
+        // Initialize subsystems that borrow config before LLM consumes it
         let stt_state = stt::build_server(&config)?;
         let tts_state = tts::build_server(&config)?;
+        let embeddings_state = synapse_embeddings::build_server(&config)?;
         let mut llm_state = LlmState::from_config(config.llm).await?;
 
         // Configure billing for LLM state when enabled
@@ -93,6 +94,9 @@ impl Server {
 
         // TTS routes
         app = app.merge(tts::endpoint_router().with_state(tts_state));
+
+        // Embeddings routes
+        app = app.merge(synapse_embeddings::endpoint_router().with_state(embeddings_state));
 
         // Apply middleware layers (outermost first)
 
