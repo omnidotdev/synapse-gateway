@@ -133,12 +133,16 @@ impl EmbeddingsProvider for OpenAiEmbeddingsProvider {
             tracing::error!(
                 provider = %self.name,
                 status = %status,
-                "OpenAI embeddings API error: {error_text}"
+                "OpenAI embeddings API error"
             );
 
-            return Err(EmbeddingsError::ProviderApiError {
-                status: status.as_u16(),
-                message: error_text,
+            return Err(match status.as_u16() {
+                401 => EmbeddingsError::AuthenticationFailed(error_text),
+                400 => EmbeddingsError::InvalidRequest(error_text),
+                _ => EmbeddingsError::ProviderApiError {
+                    status: status.as_u16(),
+                    message: error_text,
+                },
             });
         }
 
