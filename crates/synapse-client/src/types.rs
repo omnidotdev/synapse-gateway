@@ -398,3 +398,106 @@ pub struct SpeechRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speed: Option<f64>,
 }
+
+// -- Embeddings types --
+
+/// Embedding request
+#[derive(Debug, Clone, Serialize)]
+pub struct EmbedRequest {
+    /// Input text(s) to embed
+    pub input: EmbedInput,
+    /// Model identifier
+    pub model: String,
+    /// Number of dimensions (optional, model-dependent)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dimensions: Option<u32>,
+}
+
+/// Embedding input: single string or array
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum EmbedInput {
+    /// Single text input
+    Single(String),
+    /// Multiple text inputs
+    Multiple(Vec<String>),
+}
+
+/// Embedding response
+#[derive(Debug, Clone, Deserialize)]
+pub struct EmbeddingResponse {
+    /// Object type (always "list")
+    pub object: String,
+    /// Embedding results
+    pub data: Vec<EmbeddingData>,
+    /// Model used
+    pub model: String,
+    /// Token usage
+    pub usage: EmbeddingUsage,
+}
+
+/// Single embedding entry
+#[derive(Debug, Clone, Deserialize)]
+pub struct EmbeddingData {
+    /// Object type (always "embedding")
+    pub object: String,
+    /// The embedding vector
+    pub embedding: Vec<f32>,
+    /// Index in the input array
+    pub index: usize,
+}
+
+/// Token usage for embeddings
+#[derive(Debug, Clone, Deserialize)]
+pub struct EmbeddingUsage {
+    /// Tokens in the input
+    pub prompt_tokens: u32,
+    /// Total tokens used
+    pub total_tokens: u32,
+}
+
+// -- Image generation types --
+
+/// Image generation request
+#[derive(Debug, Clone, Serialize)]
+pub struct ImageRequest {
+    /// Text description of the desired image
+    pub prompt: String,
+    /// Model identifier
+    pub model: String,
+    /// Size of generated images
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<String>,
+    /// Quality level
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quality: Option<String>,
+    /// Number of images to generate
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub n: Option<u32>,
+    /// Response format ("url" or "b64_json")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<String>,
+}
+
+/// Image generation response
+#[derive(Debug, Clone, Deserialize)]
+pub struct ImageResponse {
+    /// Unix timestamp
+    pub created: u64,
+    /// Generated image data
+    pub data: Vec<ImageData>,
+}
+
+/// Single generated image
+#[derive(Debug, Clone, Deserialize)]
+pub struct ImageData {
+    /// URL of the generated image
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Base64-encoded image data
+    #[serde(default)]
+    pub b64_json: Option<String>,
+    /// Revised prompt (DALL-E 3)
+    #[serde(default)]
+    pub revised_prompt: Option<String>,
+}

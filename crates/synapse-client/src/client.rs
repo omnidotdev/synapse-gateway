@@ -11,8 +11,9 @@ use url::Url;
 
 use crate::error::{Result, SynapseClientError};
 use crate::types::{
-    ChatEvent, ChatRequest, ChatResponse, McpTool, Model, ModelList, SpeechRequest, StreamChunk,
-    ToolResult, ToolSearchResult, Transcription,
+    ChatEvent, ChatRequest, ChatResponse, EmbedRequest, EmbeddingResponse, ImageRequest,
+    ImageResponse, McpTool, Model, ModelList, SpeechRequest, StreamChunk, ToolResult,
+    ToolSearchResult, Transcription,
 };
 
 /// Backend mode for the Synapse client
@@ -443,6 +444,66 @@ impl SynapseClient {
 
                 let resp: Resp = handle_error(response).await?.json().await?;
                 Ok(resp.results)
+            }
+            #[cfg(feature = "embedded")]
+            Backend::Embedded { .. } => Err(SynapseClientError::Config(
+                "feature not available in embedded mode".to_owned(),
+            )),
+        }
+    }
+
+    // -- Embeddings --
+
+    /// Generate embeddings for text input
+    pub async fn embed(&self, req: &EmbedRequest) -> Result<EmbeddingResponse> {
+        match &self.backend {
+            Backend::Remote {
+                base_url,
+                http,
+                api_key,
+            } => {
+                let url = make_url(base_url, "/v1/embeddings");
+
+                let response = make_request(http, reqwest::Method::POST, &url, api_key.as_deref())
+                    .json(req)
+                    .send()
+                    .await?;
+
+                handle_error(response)
+                    .await?
+                    .json()
+                    .await
+                    .map_err(Into::into)
+            }
+            #[cfg(feature = "embedded")]
+            Backend::Embedded { .. } => Err(SynapseClientError::Config(
+                "feature not available in embedded mode".to_owned(),
+            )),
+        }
+    }
+
+    // -- Image Generation --
+
+    /// Generate images from a text prompt
+    pub async fn generate_image(&self, req: &ImageRequest) -> Result<ImageResponse> {
+        match &self.backend {
+            Backend::Remote {
+                base_url,
+                http,
+                api_key,
+            } => {
+                let url = make_url(base_url, "/v1/images/generations");
+
+                let response = make_request(http, reqwest::Method::POST, &url, api_key.as_deref())
+                    .json(req)
+                    .send()
+                    .await?;
+
+                handle_error(response)
+                    .await?
+                    .json()
+                    .await
+                    .map_err(Into::into)
             }
             #[cfg(feature = "embedded")]
             Backend::Embedded { .. } => Err(SynapseClientError::Config(
