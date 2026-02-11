@@ -40,6 +40,7 @@ impl Server {
         let stt_state = stt::build_server(&config)?;
         let tts_state = tts::build_server(&config)?;
         let embeddings_state = synapse_embeddings::build_server(&config)?;
+        let imagegen_state = synapse_imagegen::build_server(&config)?;
         let mut llm_state = LlmState::from_config(config.llm).await?;
 
         // Configure billing for LLM state when enabled
@@ -97,6 +98,9 @@ impl Server {
 
         // Embeddings routes
         app = app.merge(synapse_embeddings::endpoint_router().with_state(embeddings_state));
+
+        // Image generation routes
+        app = app.merge(synapse_imagegen::endpoint_router().with_state(imagegen_state));
 
         // Apply middleware layers (outermost first)
 

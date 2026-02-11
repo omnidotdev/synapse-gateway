@@ -22,6 +22,7 @@ synapse-billing.workspace = true
 synapse-config.workspace = true
 synapse-core.workspace = true
 synapse-embeddings.workspace = true
+synapse-imagegen.workspace = true
 synapse-llm = { workspace = true, features = ["http", "billing"] }
 synapse-mcp.workspace = true
 synapse-ratelimit.workspace = true

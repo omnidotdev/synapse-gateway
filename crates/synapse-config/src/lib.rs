@@ -7,6 +7,7 @@ pub mod cors;
 pub mod csrf;
 pub mod embeddings;
 mod env;
+pub mod imagegen;
 pub mod headers;
 pub mod health;
 pub mod llm;
@@ -29,6 +30,7 @@ pub use cors::*;
 pub use csrf::*;
 pub use embeddings::*;
 pub use headers::*;
+pub use imagegen::*;
 pub use health::*;
 pub use llm::*;
 pub use mcp::*;
@@ -57,6 +59,9 @@ pub struct Config {
     /// Embeddings provider configuration
     #[serde(default)]
     pub embeddings: EmbeddingsConfig,
+    /// Image generation provider configuration
+    #[serde(default)]
+    pub imagegen: ImageGenConfig,
     /// STT provider configuration
     #[serde(default)]
     pub stt: SttConfig,

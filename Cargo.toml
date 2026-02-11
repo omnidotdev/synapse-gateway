@@ -79,6 +79,7 @@ synapse-client = { path = "crates/synapse-client" }
 synapse-config = { path = "crates/synapse-config" }
 synapse-core = { path = "crates/synapse-core" }
 synapse-embeddings = { version = "0.1.0", path = "crates/synapse-embeddings" }
+synapse-imagegen = { version = "0.1.0", path = "crates/synapse-imagegen" }
 synapse-llm = { path = "crates/synapse-llm", default-features = false }
 synapse-mcp = { path = "crates/synapse-mcp" }
 synapse-ratelimit = { path = "crates/synapse-ratelimit" }
