@@ -10,6 +10,7 @@ description = "Typed Rust HTTP client for the Synapse AI router"
 
 [features]
 default = []
+agent-core = ["dep:agent-core", "dep:async-trait"]
 embedded = ["dep:synapse-llm", "dep:synapse-config", "dep:synapse-core"]
 
 [dependencies]
@@ -22,6 +23,10 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 url.workspace = true
+
+# agent-core LlmProvider integration (optional)
+agent-core = { workspace = true, optional = true }
+async-trait = { workspace = true, optional = true }
 
 # Embedded mode dependencies (optional)
 synapse-llm = { workspace = true, optional = true }
