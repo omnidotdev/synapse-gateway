@@ -151,11 +151,21 @@ impl Server {
                     .with_state(invalidate_state),
             );
 
+            let usage_reporter = synapse_auth::UsageReporter::spawn(
+                auth_config.api_url.clone(),
+                auth_config.gateway_secret.clone(),
+                std::time::Duration::from_secs(10),
+            );
+
             let public_paths = auth_config.public_paths.clone();
+            let reporter = Some(usage_reporter);
             app = app.layer(axum::middleware::from_fn(move |req, next| {
                 let resolver = resolver.clone();
                 let public_paths = public_paths.clone();
-                async move { auth::auth_middleware(resolver, public_paths, req, next).await }
+                let reporter = reporter.clone();
+                async move {
+                    auth::auth_middleware(resolver, public_paths, reporter, req, next).await
+                }
             }));
         }
 

@@ -2,7 +2,7 @@ use axum::extract::Request;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use http::StatusCode;
-use synapse_auth::{ApiKeyResolver, KeyMode};
+use synapse_auth::{ApiKeyResolver, KeyMode, UsageReporter};
 use synapse_core::{BillingIdentity, BillingMode};
 
 /// Authenticate requests via API key
@@ -13,6 +13,7 @@ use synapse_core::{BillingIdentity, BillingMode};
 pub async fn auth_middleware(
     resolver: ApiKeyResolver,
     public_paths: Vec<String>,
+    usage_reporter: Option<UsageReporter>,
     request: Request,
     next: Next,
 ) -> Response {
@@ -50,6 +51,9 @@ pub async fn auth_middleware(
             let mut request = request;
             request.extensions_mut().insert(resolved);
             request.extensions_mut().insert(billing_identity);
+            if let Some(reporter) = usage_reporter {
+                request.extensions_mut().insert(reporter);
+            }
             next.run(request).await
         }
         Err(e) => {
