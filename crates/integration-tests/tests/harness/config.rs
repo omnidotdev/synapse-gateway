@@ -4,8 +4,10 @@ use std::net::SocketAddr;
 
 use secrecy::SecretString;
 use synapse_config::{
-    CircuitBreakerConfig, Config, CorsConfig, CsrfConfig, EquivalenceGroup, FailoverConfig, HealthConfig, LlmConfig,
-    LlmProviderConfig, LlmProviderType, McpConfig, ModelConfig, RateLimitConfig, ServerConfig, SttConfig, TtsConfig,
+    CircuitBreakerConfig, Config, CorsConfig, CsrfConfig, EmbeddingsConfig, EmbeddingsProviderConfig,
+    EmbeddingsProviderType, EquivalenceGroup, FailoverConfig, HealthConfig, ImageGenConfig, ImageGenProviderConfig,
+    ImageGenProviderType, LlmConfig, LlmProviderConfig, LlmProviderType, McpConfig, ModelConfig, RateLimitConfig,
+    ServerConfig, SttConfig, TtsConfig,
 };
 
 /// Builder for constructing test configurations
@@ -28,6 +30,8 @@ impl ConfigBuilder {
                 },
                 llm: LlmConfig::default(),
                 mcp: McpConfig::default(),
+                embeddings: EmbeddingsConfig::default(),
+                imagegen: ImageGenConfig::default(),
                 stt: SttConfig::default(),
                 tts: TtsConfig::default(),
                 telemetry: None,
@@ -49,6 +53,32 @@ impl ConfigBuilder {
                 headers: Vec::new(),
                 forward_authorization: false,
                 rate_limit: None,
+            },
+        );
+        self
+    }
+
+    /// Add an OpenAI-compatible embeddings provider pointed at a mock backend
+    pub fn with_embeddings_provider(mut self, name: &str, base_url: &str) -> Self {
+        self.config.embeddings.providers.insert(
+            name.to_owned(),
+            EmbeddingsProviderConfig {
+                provider_type: EmbeddingsProviderType::Openai,
+                api_key: Some(SecretString::from("test-key")),
+                base_url: Some(base_url.to_owned()),
+            },
+        );
+        self
+    }
+
+    /// Add an OpenAI-compatible image generation provider pointed at a mock backend
+    pub fn with_imagegen_provider(mut self, name: &str, base_url: &str) -> Self {
+        self.config.imagegen.providers.insert(
+            name.to_owned(),
+            ImageGenProviderConfig {
+                provider_type: ImageGenProviderType::Openai,
+                api_key: Some(SecretString::from("test-key")),
+                base_url: Some(base_url.to_owned()),
             },
         );
         self

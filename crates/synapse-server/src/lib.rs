@@ -1,3 +1,4 @@
+mod auth;
 mod billing_identity;
 mod client_id;
 mod cors;
@@ -120,6 +121,25 @@ impl Server {
             app = app.layer(axum::middleware::from_fn(move |req, next| {
                 let header_name = header_name.clone();
                 async move { csrf::csrf_middleware(header_name, req, next).await }
+            }));
+        }
+
+        // API key authentication
+        if let Some(ref auth_config) = config.auth
+            && auth_config.enabled
+        {
+            let resolver = synapse_auth::ApiKeyResolver::new(
+                auth_config.api_url.clone(),
+                auth_config.gateway_secret.clone(),
+                std::time::Duration::from_secs(auth_config.cache_ttl_seconds),
+                auth_config.cache_capacity,
+                auth_config.tls_skip_verify,
+            )?;
+            let public_paths = auth_config.public_paths.clone();
+            app = app.layer(axum::middleware::from_fn(move |req, next| {
+                let resolver = resolver.clone();
+                let public_paths = public_paths.clone();
+                async move { auth::auth_middleware(resolver, public_paths, req, next).await }
             }));
         }
 

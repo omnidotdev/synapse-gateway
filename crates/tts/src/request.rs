@@ -93,10 +93,7 @@ where
                 .and_then(|value| value.to_str().map(str::to_string).ok())
                 .map(SecretString::from),
             client_identity: parts.extensions.remove(),
-            authentication: parts
-                .extensions
-                .remove()
-                .expect("Authentication must be provided by a parent layer."),
+            authentication: parts.extensions.remove().unwrap_or_default(),
             parts,
         };
 

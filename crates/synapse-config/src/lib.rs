@@ -1,5 +1,6 @@
 #![allow(clippy::must_use_candidate)]
 
+pub mod auth;
 pub mod billing;
 pub mod client_identification;
 pub mod client_ip;
@@ -24,6 +25,7 @@ pub mod tts;
 
 use serde::Deserialize;
 
+pub use auth::*;
 pub use billing::*;
 pub use client_identification::*;
 pub use cors::*;
@@ -74,6 +76,9 @@ pub struct Config {
     /// Proxy configuration
     #[serde(default)]
     pub proxy: Option<ProxyConfig>,
+    /// API key authentication configuration
+    #[serde(default)]
+    pub auth: Option<AuthConfig>,
     /// Billing and metering configuration
     #[serde(default)]
     pub billing: Option<BillingConfig>,
