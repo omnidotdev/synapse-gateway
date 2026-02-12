@@ -57,6 +57,6 @@ COPY --from=builder /synapse/target/release/synapse /bin/synapse
 WORKDIR /data
 
 ENTRYPOINT ["/bin/synapse"]
-CMD ["--config", "/etc/synapse.toml", "--listen-address", "0.0.0.0:3000"]
+CMD ["--config", "/etc/synapse.toml", "--listen", "0.0.0.0:3000"]
 
 EXPOSE 3000
