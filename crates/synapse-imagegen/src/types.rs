@@ -16,7 +16,7 @@ pub struct ImageRequest {
     /// Quality of generated images ("standard" or "hd")
     #[serde(default = "default_quality")]
     pub quality: String,
-    /// Response format ("url" or "b64_json")
+    /// Response format ("url" or "`b64_json`")
     #[serde(default = "default_response_format")]
     pub response_format: String,
     /// Unique identifier for the end user (optional)
@@ -47,10 +47,10 @@ fn default_response_format() -> String {
 /// Single image entry in the response
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ImageData {
-    /// URL of the generated image (when response_format is "url")
+    /// URL of the generated image (when `response_format` is "url")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    /// Base64-encoded image data (when response_format is "b64_json")
+    /// Base64-encoded image data (when `response_format` is "`b64_json`")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub b64_json: Option<String>,
     /// Revised prompt used by the model (if applicable)

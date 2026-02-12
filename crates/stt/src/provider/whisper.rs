@@ -14,7 +14,7 @@ use super::SttProvider;
 const DEFAULT_OPENAI_API_URL: &str = "https://api.openai.com/v1";
 
 /// `OpenAI` Whisper STT provider
-pub(crate) struct WhisperProvider {
+pub struct WhisperProvider {
     client: Client,
     base_url: String,
     api_key: SecretString,

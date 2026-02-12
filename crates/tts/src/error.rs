@@ -44,7 +44,7 @@ pub enum TtsError {
 
 impl TtsError {
     /// Get the appropriate HTTP status code for this error
-    pub fn status_code(&self) -> StatusCode {
+    pub const fn status_code(&self) -> StatusCode {
         match self {
             Self::InvalidRequest(_) => StatusCode::BAD_REQUEST,
             Self::AuthenticationFailed(_) => StatusCode::UNAUTHORIZED,
@@ -62,7 +62,7 @@ impl TtsError {
     }
 
     /// Get the error type string for the response
-    pub fn error_type(&self) -> &str {
+    pub const fn error_type(&self) -> &str {
         match self {
             Self::InvalidRequest(_) => "invalid_request_error",
             Self::AuthenticationFailed(_) => "authentication_error",

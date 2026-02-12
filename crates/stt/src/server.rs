@@ -19,7 +19,7 @@ impl Server {
     /// Routes to a provider based on the model name in the request.
     /// Model format: "provider/model" (e.g. "openai/whisper-1" or "deepgram/nova-2").
     /// If no provider prefix, uses the first configured provider.
-    pub(crate) async fn transcribe(
+    pub async fn transcribe(
         &self,
         request: TranscriptionRequest,
         context: &RequestContext,
@@ -44,7 +44,7 @@ impl Server {
 }
 
 /// Builder for constructing the STT server from configuration
-pub(crate) struct SttServerBuilder<'a> {
+pub struct SttServerBuilder<'a> {
     config: &'a synapse_config::Config,
 }
 

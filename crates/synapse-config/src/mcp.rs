@@ -150,9 +150,11 @@ pub struct McpCacheConfig {
     pub ttl: u64,
 }
 
+#[allow(clippy::missing_const_for_fn)]
 fn default_cache_max() -> u64 {
     100
 }
+#[allow(clippy::missing_const_for_fn)]
 fn default_cache_ttl() -> u64 {
     300
 }

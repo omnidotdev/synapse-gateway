@@ -19,7 +19,7 @@ impl Server {
     /// Routes to a provider based on the model name in the request.
     /// Model format: "provider/model" (e.g. "openai/tts-1" or "elevenlabs/`eleven_multilingual_v2`").
     /// If no provider prefix, uses the first configured provider.
-    pub(crate) async fn synthesize(
+    pub async fn synthesize(
         &self,
         request: SpeechRequest,
         context: &RequestContext,
@@ -44,12 +44,12 @@ impl Server {
 }
 
 /// Builder for constructing the TTS server from configuration
-pub(crate) struct TtsServerBuilder<'a> {
+pub struct TtsServerBuilder<'a> {
     config: &'a synapse_config::Config,
 }
 
 impl<'a> TtsServerBuilder<'a> {
-    pub fn new(config: &'a synapse_config::Config) -> Self {
+    pub const fn new(config: &'a synapse_config::Config) -> Self {
         Self { config }
     }
 

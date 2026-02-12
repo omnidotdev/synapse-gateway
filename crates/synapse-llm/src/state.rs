@@ -378,6 +378,7 @@ impl LlmState {
     }
 
     /// Execute a non-streaming completion with failover support
+    #[allow(clippy::cognitive_complexity)]
     pub(crate) async fn complete_with_failover(
         &self,
         request: &CompletionRequest,
@@ -582,6 +583,7 @@ impl LlmState {
     /// Execute a streaming cascade: buffer initial model's response, evaluate
     /// confidence, then either replay the buffer or re-request with the
     /// escalation model
+    #[allow(clippy::cognitive_complexity)]
     pub(crate) async fn complete_stream_with_cascade(
         &self,
         request: &CompletionRequest,

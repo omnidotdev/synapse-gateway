@@ -14,7 +14,7 @@ use super::TtsProvider;
 const DEFAULT_ELEVENLABS_API_URL: &str = "https://api.elevenlabs.io/v1";
 
 /// `ElevenLabs` TTS provider
-pub(crate) struct ElevenLabsProvider {
+pub struct ElevenLabsProvider {
     client: Client,
     base_url: String,
     api_key: SecretString,

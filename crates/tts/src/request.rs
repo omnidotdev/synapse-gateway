@@ -9,7 +9,7 @@ const PROVIDER_API_KEY_HEADER: &str = "X-Provider-API-Key";
 /// Runtime context for TTS provider requests
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub(crate) struct RequestContext {
+pub struct RequestContext {
     pub parts: http::request::Parts,
 
     /// User-provided API key that overrides the configured key
@@ -23,13 +23,13 @@ pub(crate) struct RequestContext {
 
 #[allow(dead_code)]
 impl RequestContext {
-    pub fn headers(&self) -> &axum::http::HeaderMap {
+    pub const fn headers(&self) -> &axum::http::HeaderMap {
         &self.parts.headers
     }
 }
 
 /// Extractor for JSON request bodies
-pub(crate) struct ExtractPayload<T>(pub RequestContext, pub T);
+pub struct ExtractPayload<T>(pub RequestContext, pub T);
 
 /// Body limit for TTS requests (1 MiB)
 const BODY_LIMIT_BYTES: usize = 1 << 20;
@@ -97,6 +97,6 @@ where
             parts,
         };
 
-        Ok(ExtractPayload(ctx, body))
+        Ok(Self(ctx, body))
     }
 }

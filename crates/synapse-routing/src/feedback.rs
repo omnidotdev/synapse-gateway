@@ -88,6 +88,7 @@ impl FeedbackTracker {
         }
 
         let mut sorted = entry.latencies_ms.clone();
+        drop(entry);
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
         Some(LatencyStats {
@@ -139,11 +140,13 @@ impl FeedbackTracker {
         let entry = self.models.get(&key)?;
 
         let total = entry.total_requests.load(Ordering::Relaxed);
+        let errors = entry.total_errors.load(Ordering::Relaxed);
+        drop(entry);
+
         if total == 0 {
             return None;
         }
 
-        let errors = entry.total_errors.load(Ordering::Relaxed);
         Some(errors as f64 / total as f64)
     }
 }

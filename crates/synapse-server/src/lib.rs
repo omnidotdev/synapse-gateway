@@ -32,6 +32,7 @@ impl Server {
     ///
     /// Returns an error if subsystem initialization (LLM, MCP, STT, TTS) or
     /// rate-limiter construction fails
+    #[allow(clippy::too_many_lines)]
     pub async fn new(config: Config) -> anyhow::Result<Self> {
         let listen_address = config
             .server

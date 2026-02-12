@@ -106,6 +106,7 @@ impl SynapseClient {
 
     /// Get the base URL (remote mode only)
     #[must_use]
+    #[allow(clippy::missing_const_for_fn)]
     pub fn base_url(&self) -> &Url {
         match &self.backend {
             Backend::Remote { base_url, .. } => base_url,
@@ -578,20 +579,21 @@ async fn handle_error(response: reqwest::Response) -> Result<reqwest::Response> 
 
 /// Parse an error response body into (type, message)
 fn parse_error_body(body: &str) -> (String, String) {
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(body) {
-        let error = &json["error"];
-        let error_type = error["type"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_owned();
-        let message = error["message"]
-            .as_str()
-            .unwrap_or(body)
-            .to_owned();
-        (error_type, message)
-    } else {
-        ("unknown".to_owned(), body.to_owned())
-    }
+    serde_json::from_str::<serde_json::Value>(body).map_or_else(
+        |_| ("unknown".to_owned(), body.to_owned()),
+        |json| {
+            let error = &json["error"];
+            let error_type = error["type"]
+                .as_str()
+                .unwrap_or("unknown")
+                .to_owned();
+            let message = error["message"]
+                .as_str()
+                .unwrap_or(body)
+                .to_owned();
+            (error_type, message)
+        },
+    )
 }
 
 /// Parse a byte stream of SSE data into `ChatEvent`s

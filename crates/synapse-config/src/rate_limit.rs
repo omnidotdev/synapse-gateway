@@ -93,9 +93,11 @@ pub struct TokenRateLimit {
     pub window: String,
 }
 
+#[allow(clippy::missing_const_for_fn)]
 fn default_pool_size() -> usize {
     10
 }
+#[allow(clippy::missing_const_for_fn)]
 fn default_connect_timeout() -> u64 {
     5
 }

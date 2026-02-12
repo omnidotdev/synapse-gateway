@@ -42,11 +42,12 @@ pub struct ProtectedResourceConfig {
 
 impl OAuthConfig {
     /// Get poll interval as Duration
-    pub fn poll_interval_duration(&self) -> Duration {
+    pub const fn poll_interval_duration(&self) -> Duration {
         Duration::from_secs(self.poll_interval)
     }
 }
 
+#[allow(clippy::missing_const_for_fn)]
 fn default_poll_interval() -> u64 {
     300
 }

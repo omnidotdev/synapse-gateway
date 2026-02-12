@@ -76,9 +76,11 @@ pub fn route(
         })
     });
 
-    let selected = candidates.first().ok_or(RoutingError::NoModelAvailable {
-        class: "cost".to_owned(),
-    })?;
+    let selected = candidates
+        .first()
+        .ok_or_else(|| RoutingError::NoModelAvailable {
+            class: "cost".to_owned(),
+        })?;
 
     let alternatives = candidates
         .iter()

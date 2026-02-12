@@ -21,7 +21,7 @@ impl Config {
         let expanded =
             crate::env::expand_env(&raw).map_err(|e| anyhow::anyhow!("config variable expansion failed: {e}"))?;
 
-        let config: Config = toml::from_str(&expanded).map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
+        let config: Self = toml::from_str(&expanded).map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
 
         config.validate()?;
 

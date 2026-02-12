@@ -53,7 +53,7 @@ impl RequestContext {
     }
 
     /// Access request headers
-    pub fn headers(&self) -> &http::HeaderMap {
+    pub const fn headers(&self) -> &http::HeaderMap {
         &self.parts.headers
     }
 }

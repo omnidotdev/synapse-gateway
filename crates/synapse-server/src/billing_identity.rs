@@ -49,7 +49,7 @@ pub async fn billing_identity_middleware(
 }
 
 /// Determine billing mode from config and whether a provider key is present
-fn resolve_billing_mode(configured_mode: &OperatingMode, has_provider_key: bool) -> BillingMode {
+const fn resolve_billing_mode(configured_mode: &OperatingMode, has_provider_key: bool) -> BillingMode {
     match configured_mode {
         OperatingMode::Byok => BillingMode::Byok,
         OperatingMode::Managed => BillingMode::Managed,

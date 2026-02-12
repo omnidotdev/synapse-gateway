@@ -14,7 +14,7 @@ use super::SttProvider;
 const DEFAULT_DEEPGRAM_API_URL: &str = "https://api.deepgram.com/v1";
 
 /// Deepgram STT provider
-pub(crate) struct DeepgramProvider {
+pub struct DeepgramProvider {
     client: Client,
     base_url: String,
     api_key: SecretString,

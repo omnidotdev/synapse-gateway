@@ -19,7 +19,7 @@ impl Server {
     /// Routes to a provider based on the model name in the request.
     /// Model format: "provider/model" (e.g. "openai/dall-e-3").
     /// If no provider prefix, uses the first configured provider.
-    pub(crate) async fn generate(
+    pub async fn generate(
         &self,
         request: &ImageRequest,
         context: &RequestContext,
@@ -47,7 +47,7 @@ impl Server {
 }
 
 /// Builder for constructing the image generation server from configuration
-pub(crate) struct ImageGenServerBuilder<'a> {
+pub struct ImageGenServerBuilder<'a> {
     config: &'a synapse_config::Config,
 }
 

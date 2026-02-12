@@ -53,16 +53,16 @@ impl FailoverState {
 
         // Check each provider's error rate
         for provider in providers {
-            if let Some(error_rate) = feedback.error_rate(provider, "") {
-                if error_rate >= self.error_threshold {
-                    tracing::warn!(
-                        provider = %provider,
-                        error_rate = %error_rate,
-                        threshold = %self.error_threshold,
-                        "marking provider as down"
-                    );
-                    self.down_providers.insert(provider.clone(), Instant::now());
-                }
+            if let Some(error_rate) = feedback.error_rate(provider, "")
+                && error_rate >= self.error_threshold
+            {
+                tracing::warn!(
+                    provider = %provider,
+                    error_rate = %error_rate,
+                    threshold = %self.error_threshold,
+                    "marking provider as down"
+                );
+                self.down_providers.insert(provider.clone(), Instant::now());
             }
 
             // Also check provider-level error rate by looking at "provider/*" pattern
@@ -76,10 +76,11 @@ impl FailoverState {
     /// Returns `true` if the provider is not in the down list, or if its
     /// recovery window has elapsed
     pub fn is_healthy(&self, provider: &str) -> bool {
-        match self.down_providers.get(provider) {
-            Some(marked_at) => marked_at.elapsed() >= self.recovery_window,
-            None => true,
-        }
+        self.down_providers
+            .get(provider)
+            .is_none_or(|marked_at| {
+                marked_at.elapsed() >= self.recovery_window
+            })
     }
 
     /// Apply failover logic to a routing decision

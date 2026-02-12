@@ -10,7 +10,7 @@ const PROVIDER_API_KEY_HEADER: &str = "X-Provider-API-Key";
 /// Runtime context for STT provider requests
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub(crate) struct RequestContext {
+pub struct RequestContext {
     pub parts: http::request::Parts,
 
     /// User-provided API key that overrides the configured key
@@ -30,7 +30,7 @@ impl RequestContext {
 }
 
 /// Extractor for multipart form data containing audio files
-pub(crate) struct ExtractMultipart(pub RequestContext, pub TranscriptionRequest);
+pub struct ExtractMultipart(pub RequestContext, pub TranscriptionRequest);
 
 /// Body limit for audio uploads (32 MiB)
 const BODY_LIMIT_BYTES: usize = 32 << 20;

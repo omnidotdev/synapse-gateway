@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // Build server
-    let server = Server::new(config).await?;
+    let server = Box::pin(Server::new(config)).await?;
 
     // Set up graceful shutdown
     let shutdown = CancellationToken::new();

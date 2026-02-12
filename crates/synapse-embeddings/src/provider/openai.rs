@@ -14,7 +14,7 @@ use crate::{
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 
 /// `OpenAI` embeddings provider
-pub(crate) struct OpenAiEmbeddingsProvider {
+pub struct OpenAiEmbeddingsProvider {
     name: String,
     client: Client,
     api_key: SecretString,

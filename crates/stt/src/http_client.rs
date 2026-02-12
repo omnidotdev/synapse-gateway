@@ -4,7 +4,7 @@ use axum::http;
 use reqwest::Client;
 
 /// Common HTTP client to reuse connections across STT providers
-pub(crate) fn http_client() -> Client {
+pub fn http_client() -> Client {
     static CLIENT: OnceLock<Client> = OnceLock::new();
 
     CLIENT

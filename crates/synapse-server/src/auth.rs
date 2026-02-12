@@ -38,18 +38,18 @@ pub async fn auth_middleware(
     }
 
     match resolver.resolve(token).await {
-        Ok(resolved) => {
+        Ok(result) => {
             let billing_identity = BillingIdentity {
                 entity_type: "user".to_string(),
-                entity_id: resolved.user_id.clone(),
-                mode: match resolved.mode {
+                entity_id: result.user_id.clone(),
+                mode: match result.mode {
                     KeyMode::Byok => BillingMode::Byok,
                     KeyMode::Managed => BillingMode::Managed,
                 },
             };
 
             let mut request = request;
-            request.extensions_mut().insert(resolved);
+            request.extensions_mut().insert(result);
             request.extensions_mut().insert(billing_identity);
             if let Some(reporter) = usage_reporter {
                 request.extensions_mut().insert(reporter);

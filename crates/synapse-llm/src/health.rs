@@ -112,6 +112,7 @@ impl ProviderHealthTracker {
             // Trip the breaker if threshold exceeded
             if count >= self.config.error_threshold {
                 health.opened_at.store(now, Ordering::Relaxed);
+                drop(health);
                 tracing::warn!(
                     provider,
                     error_count = count,

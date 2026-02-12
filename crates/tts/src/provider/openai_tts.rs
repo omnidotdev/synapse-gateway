@@ -14,7 +14,7 @@ use super::TtsProvider;
 const DEFAULT_OPENAI_API_URL: &str = "https://api.openai.com/v1";
 
 /// `OpenAI` TTS provider
-pub(crate) struct OpenAiTtsProvider {
+pub struct OpenAiTtsProvider {
     client: Client,
     base_url: String,
     api_key: SecretString,

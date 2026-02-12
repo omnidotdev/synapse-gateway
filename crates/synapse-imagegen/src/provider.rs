@@ -1,4 +1,4 @@
-pub(crate) mod openai;
+pub mod openai;
 
 use async_trait::async_trait;
 use synapse_core::RequestContext;
@@ -10,7 +10,7 @@ use crate::{
 
 /// Trait for image generation provider implementations
 #[async_trait]
-pub(crate) trait ImageGenProvider: Send + Sync {
+pub trait ImageGenProvider: Send + Sync {
     /// Generate images for the given request
     async fn generate(
         &self,

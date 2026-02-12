@@ -1,4 +1,4 @@
-pub(crate) mod openai;
+pub mod openai;
 
 use async_trait::async_trait;
 use synapse_core::RequestContext;
@@ -10,7 +10,7 @@ use crate::{
 
 /// Trait for embeddings provider implementations
 #[async_trait]
-pub(crate) trait EmbeddingsProvider: Send + Sync {
+pub trait EmbeddingsProvider: Send + Sync {
     /// Generate embeddings for the given request
     async fn embed(
         &self,

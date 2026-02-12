@@ -19,7 +19,7 @@ impl Server {
     /// Routes to a provider based on the model name in the request.
     /// Model format: "provider/model" (e.g. "openai/text-embedding-3-small").
     /// If no provider prefix, uses the first configured provider.
-    pub(crate) async fn embed(
+    pub async fn embed(
         &self,
         request: &EmbeddingRequest,
         context: &RequestContext,
@@ -47,7 +47,7 @@ impl Server {
 }
 
 /// Builder for constructing the embeddings server from configuration
-pub(crate) struct EmbeddingsServerBuilder<'a> {
+pub struct EmbeddingsServerBuilder<'a> {
     config: &'a synapse_config::Config,
 }
 

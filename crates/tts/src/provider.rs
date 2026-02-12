@@ -1,5 +1,5 @@
-pub(crate) mod elevenlabs;
-pub(crate) mod openai_tts;
+pub mod elevenlabs;
+pub mod openai_tts;
 
 use async_trait::async_trait;
 
@@ -10,7 +10,7 @@ use crate::{
 
 /// Trait for TTS provider implementations
 #[async_trait]
-pub(crate) trait TtsProvider: Send + Sync {
+pub trait TtsProvider: Send + Sync {
     /// Synthesize text to speech
     async fn synthesize(
         &self,

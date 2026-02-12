@@ -1,5 +1,5 @@
-pub(crate) mod deepgram;
-pub(crate) mod whisper;
+pub mod deepgram;
+pub mod whisper;
 
 use async_trait::async_trait;
 
@@ -10,7 +10,7 @@ use crate::{
 
 /// Trait for STT provider implementations
 #[async_trait]
-pub(crate) trait SttProvider: Send + Sync {
+pub trait SttProvider: Send + Sync {
     /// Transcribe audio to text
     async fn transcribe(
         &self,

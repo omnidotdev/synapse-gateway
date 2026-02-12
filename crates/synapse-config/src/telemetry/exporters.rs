@@ -64,12 +64,15 @@ pub struct ExporterTlsConfig {
     pub client_key: Option<String>,
 }
 
+#[allow(clippy::missing_const_for_fn)]
 fn default_batch_size() -> usize {
     512
 }
+#[allow(clippy::missing_const_for_fn)]
 fn default_queue_size() -> usize {
     2048
 }
+#[allow(clippy::missing_const_for_fn)]
 fn default_export_interval() -> u64 {
     5
 }

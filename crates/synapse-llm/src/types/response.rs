@@ -88,7 +88,7 @@ pub struct CompletionResponse {
 }
 
 /// Build a tool call from raw parts
-pub fn build_tool_call(id: String, name: String, arguments: String) -> ToolCall {
+pub const fn build_tool_call(id: String, name: String, arguments: String) -> ToolCall {
     ToolCall {
         id,
         function: FunctionCall { name, arguments },

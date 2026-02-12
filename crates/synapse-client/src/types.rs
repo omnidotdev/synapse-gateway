@@ -474,7 +474,7 @@ pub struct ImageRequest {
     /// Number of images to generate
     #[serde(skip_serializing_if = "Option::is_none")]
     pub n: Option<u32>,
-    /// Response format ("url" or "b64_json")
+    /// Response format ("url" or "`b64_json`")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_format: Option<String>,
 }

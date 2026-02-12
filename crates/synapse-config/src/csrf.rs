@@ -19,6 +19,7 @@ impl Default for CsrfConfig {
     }
 }
 
+#[allow(clippy::missing_const_for_fn)]
 fn default_enabled() -> bool {
     true
 }

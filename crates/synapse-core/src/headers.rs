@@ -74,7 +74,7 @@ pub struct ValidHeaderName(HeaderName);
 
 impl ValidHeaderName {
     /// Create from a known-valid header name
-    pub fn new(name: HeaderName) -> Self {
+    pub const fn new(name: HeaderName) -> Self {
         Self(name)
     }
 }
@@ -91,7 +91,7 @@ pub struct ValidHeaderValue(HeaderValue);
 
 impl ValidHeaderValue {
     /// Create from a known-valid header value
-    pub fn new(value: HeaderValue) -> Self {
+    pub const fn new(value: HeaderValue) -> Self {
         Self(value)
     }
 }
@@ -282,10 +282,10 @@ impl<'de> Deserialize<'de> for NameOrPattern {
         // If the string contains regex metacharacters, treat as pattern
         if s.contains('*') || s.contains('?') || s.contains('[') || s.contains('(') {
             let regex = Regex::new(&s).map_err(|e| serde::de::Error::custom(format!("invalid pattern: {e}")))?;
-            Ok(NameOrPattern::Pattern(HeaderPattern(regex)))
+            Ok(Self::Pattern(HeaderPattern(regex)))
         } else {
             let name = HeaderName::try_from(s.as_str()).map_err(serde::de::Error::custom)?;
-            Ok(NameOrPattern::Name(ValidHeaderName(name)))
+            Ok(Self::Name(ValidHeaderName(name)))
         }
     }
 }

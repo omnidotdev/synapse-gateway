@@ -14,7 +14,7 @@ use crate::{
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 
 /// `OpenAI` image generation provider
-pub(crate) struct OpenAiImageGenProvider {
+pub struct OpenAiImageGenProvider {
     name: String,
     client: Client,
     api_key: SecretString,

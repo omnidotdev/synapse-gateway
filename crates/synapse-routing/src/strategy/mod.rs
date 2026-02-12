@@ -165,7 +165,7 @@ impl StrategyRegistry {
     }
 
     /// Resolve the strategy name from config
-    pub fn resolve_name(config: &RoutingConfig) -> &str {
+    pub const fn resolve_name(config: &RoutingConfig) -> &str {
         match &config.strategy {
             synapse_config::RoutingStrategy::Threshold => "threshold",
             synapse_config::RoutingStrategy::Cost => "cost",

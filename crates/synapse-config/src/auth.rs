@@ -33,10 +33,12 @@ pub struct AuthConfig {
     pub tls_skip_verify: bool,
 }
 
+#[allow(clippy::missing_const_for_fn)]
 fn default_cache_ttl() -> u64 {
     30
 }
 
+#[allow(clippy::missing_const_for_fn)]
 fn default_cache_capacity() -> u64 {
     10_000
 }

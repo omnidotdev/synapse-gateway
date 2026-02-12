@@ -102,6 +102,7 @@ async fn process_events(
 }
 
 /// Record a single usage event to Aether as three meter updates
+#[allow(clippy::cognitive_complexity)]
 async fn record_event(client: &AetherClient, meter_keys: &MeterKeys, event: &UsageEvent) {
     let metadata = build_metadata(event);
 

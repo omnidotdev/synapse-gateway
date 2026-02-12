@@ -48,9 +48,11 @@ pub struct TracingLimits {
     pub max_links_per_span: Option<u32>,
 }
 
+#[allow(clippy::missing_const_for_fn)]
 fn default_sampling_rate() -> f64 {
     1.0
 }
+#[allow(clippy::missing_const_for_fn)]
 fn default_true() -> bool {
     true
 }
