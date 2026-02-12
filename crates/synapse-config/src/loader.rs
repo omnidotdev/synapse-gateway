@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use secrecy::ExposeSecret;
+
 use crate::Config;
 
 impl Config {
@@ -36,6 +38,7 @@ impl Config {
         self.validate_has_downstreams()?;
         self.validate_llm_config()?;
         self.validate_mcp_config()?;
+        self.validate_auth_config()?;
         Ok(())
     }
 
@@ -89,6 +92,31 @@ impl Config {
             {
                 anyhow::bail!("MCP server '{name}' cannot have both allow and deny lists");
             }
+        }
+
+        Ok(())
+    }
+
+    /// Validate auth configuration when auth is enabled
+    fn validate_auth_config(&self) -> anyhow::Result<()> {
+        let Some(ref auth) = self.auth else {
+            return Ok(());
+        };
+
+        if !auth.enabled {
+            return Ok(());
+        }
+
+        if auth.gateway_secret.expose_secret().is_empty() {
+            anyhow::bail!("auth.gateway_secret must not be empty when auth is enabled");
+        }
+
+        if auth.cache_ttl_seconds == 0 {
+            anyhow::bail!("auth.cache_ttl_seconds must be greater than 0");
+        }
+
+        if auth.cache_capacity > 1_000_000 {
+            anyhow::bail!("auth.cache_capacity exceeds maximum of 1,000,000");
         }
 
         Ok(())
