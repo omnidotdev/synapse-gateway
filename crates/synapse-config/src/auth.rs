@@ -34,7 +34,7 @@ pub struct AuthConfig {
 }
 
 fn default_cache_ttl() -> u64 {
-    60
+    30
 }
 
 fn default_cache_capacity() -> u64 {

@@ -6,6 +6,7 @@ mod csrf;
 mod entitlement;
 mod entitlement_cache;
 mod health;
+mod invalidate;
 mod rate_limit;
 mod request_context;
 
@@ -138,6 +139,18 @@ impl Server {
                 auth_config.cache_capacity,
                 auth_config.tls_skip_verify,
             )?;
+
+            // Cache invalidation endpoint
+            let invalidate_state = invalidate::InvalidateState {
+                resolver: resolver.clone(),
+                gateway_secret: auth_config.gateway_secret.clone(),
+            };
+            app = app.route(
+                "/internal/invalidate-key",
+                axum::routing::post(invalidate::invalidate_key_handler)
+                    .with_state(invalidate_state),
+            );
+
             let public_paths = auth_config.public_paths.clone();
             app = app.layer(axum::middleware::from_fn(move |req, next| {
                 let resolver = resolver.clone();

@@ -138,6 +138,12 @@ impl ApiKeyResolver {
 
         Ok(resolved)
     }
+
+    /// Remove a cached key resolution (e.g. after revocation)
+    pub fn invalidate(&self, raw_key: &str) {
+        let cache_key = sha256_hex(raw_key);
+        self.cache.invalidate(&cache_key);
+    }
 }
 
 /// Compute the SHA-256 hex digest of a string
