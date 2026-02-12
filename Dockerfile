@@ -53,6 +53,7 @@ RUN adduser -D -u 1000 synapse && mkdir -p /data && chown synapse:synapse /data
 USER synapse
 
 COPY --from=builder /synapse/target/release/synapse /bin/synapse
+COPY config/synapse.prod.toml /etc/synapse.toml
 
 WORKDIR /data
 

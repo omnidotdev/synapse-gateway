@@ -1,0 +1,135 @@
+# Synapse Production Configuration
+#
+# Baked into the Docker image at /etc/synapse.toml.
+# Secrets are interpolated from environment variables at runtime.
+
+[server]
+listen_address = "0.0.0.0:3000"
+
+[server.health]
+enabled = true
+path = "/health"
+
+# ------------------------------------
+# LLM Providers
+# ------------------------------------
+
+[llm.providers.openai]
+type = "openai"
+api_key = "{{ env.OPENAI_API_KEY }}"
+
+[llm.providers.anthropic]
+type = "anthropic"
+api_key = "{{ env.ANTHROPIC_API_KEY }}"
+
+# ------------------------------------
+# Intelligent Routing
+# ------------------------------------
+
+[llm.routing]
+enabled = true
+strategy = "threshold"
+
+[llm.routing.threshold]
+low_complexity_model = "openai/gpt-4o-mini"
+high_complexity_model = "anthropic/claude-sonnet-4-20250514"
+quality_floor = 0.7
+
+[[llm.routing.models]]
+provider = "openai"
+model = "gpt-4o-mini"
+input_per_mtok = 0.15
+output_per_mtok = 0.60
+quality = 0.7
+context_window = 128000
+[llm.routing.models.capabilities]
+tool_calling = true
+vision = true
+
+[[llm.routing.models]]
+provider = "openai"
+model = "gpt-4o"
+input_per_mtok = 2.50
+output_per_mtok = 10.00
+quality = 0.88
+context_window = 128000
+[llm.routing.models.capabilities]
+tool_calling = true
+vision = true
+
+[[llm.routing.models]]
+provider = "anthropic"
+model = "claude-sonnet-4-20250514"
+input_per_mtok = 3.00
+output_per_mtok = 15.00
+quality = 0.92
+context_window = 200000
+[llm.routing.models.capabilities]
+tool_calling = true
+vision = true
+long_context = true
+
+# ------------------------------------
+# Failover
+# ------------------------------------
+
+[llm.failover]
+enabled = true
+max_attempts = 2
+
+[[llm.failover.equivalence_groups]]
+name = "frontier"
+models = ["openai/gpt-4o", "anthropic/claude-sonnet-4-20250514"]
+
+[[llm.failover.equivalence_groups]]
+name = "fast"
+models = ["openai/gpt-4o-mini", "anthropic/claude-haiku-4-5-20251001"]
+
+[llm.failover.circuit_breaker]
+error_threshold = 5
+window_seconds = 60
+recovery_seconds = 30
+
+# ------------------------------------
+# Embeddings
+# ------------------------------------
+
+[embeddings.providers.openai]
+type = "openai"
+api_key = "{{ env.OPENAI_API_KEY }}"
+
+# ------------------------------------
+# Image Generation
+# ------------------------------------
+
+[imagegen.providers.openai]
+type = "openai"
+api_key = "{{ env.OPENAI_API_KEY }}"
+
+# ------------------------------------
+# Speech-to-Text
+# ------------------------------------
+
+[stt.providers.whisper]
+type = "whisper"
+api_key = "{{ env.OPENAI_API_KEY }}"
+
+# ------------------------------------
+# Text-to-Speech
+# ------------------------------------
+
+[tts.providers.openai]
+type = "openai_tts"
+api_key = "{{ env.OPENAI_API_KEY }}"
+
+# ------------------------------------
+# API Key Authentication
+# ------------------------------------
+
+[auth]
+enabled = true
+api_url = "http://synapse-api.railway.internal:4000"
+gateway_secret = "{{ env.GATEWAY_SECRET }}"
+cache_ttl_seconds = 60
+cache_capacity = 10000
+public_paths = ["/health"]
