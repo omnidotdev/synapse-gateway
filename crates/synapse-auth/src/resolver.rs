@@ -9,6 +9,18 @@ use sha2::{Digest, Sha256};
 
 use crate::AuthError;
 
+/// Plan-based rate limits from synapse-api
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RateLimits {
+    /// Maximum requests per minute
+    pub requests_per_minute: u32,
+    /// Maximum tokens per day
+    pub tokens_per_day: u64,
+    /// Maximum tokens per month
+    pub tokens_per_month: u64,
+}
+
 /// Resolved API key context from synapse-api
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,6 +33,11 @@ pub struct ResolvedKey {
     pub api_key_id: String,
     /// Key mode (BYOK or managed)
     pub mode: KeyMode,
+    /// User's plan tier
+    pub plan: String,
+    /// Plan-based rate limits
+    #[serde(default)]
+    pub rate_limits: Option<RateLimits>,
     /// Decrypted provider keys (only for BYOK mode)
     #[serde(default)]
     pub provider_keys: Vec<ProviderKeyRef>,
