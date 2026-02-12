@@ -103,7 +103,10 @@ impl Server {
         // Image generation routes
         app = app.merge(synapse_imagegen::endpoint_router().with_state(imagegen_state));
 
-        // Apply middleware layers (outermost first)
+        // Apply middleware layers (innermost first)
+
+        // Request context (innermost — collects auth/identity data, runs just before handlers)
+        app = app.layer(axum::middleware::from_fn(request_context::request_context_middleware));
 
         // Tracing
         app = app.layer(TraceLayer::new_for_http());
@@ -187,9 +190,6 @@ impl Server {
                 async move { entitlement::entitlement_middleware(state, req, next).await }
             }));
         }
-
-        // Request context (innermost — runs before route handlers)
-        app = app.layer(axum::middleware::from_fn(request_context::request_context_middleware));
 
         Ok(Self {
             router: app,

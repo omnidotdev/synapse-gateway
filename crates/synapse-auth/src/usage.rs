@@ -68,28 +68,48 @@ async fn flush_loop(
     let mut ticker = tokio::time::interval(interval);
 
     loop {
-        tokio::select! {
-            Some(event) = rx.recv() => {
-                buffer.push(event);
-            }
-            _ = ticker.tick() => {
-                if buffer.is_empty() {
-                    continue;
-                }
-
-                let events = std::mem::take(&mut buffer);
-                let count = events.len();
-
-                if let Err(e) = http
-                    .post(url.clone())
-                    .header("X-Gateway-Secret", gateway_secret.expose_secret())
-                    .json(&serde_json::json!({ "events": events }))
-                    .send()
-                    .await
-                {
-                    tracing::warn!(error = %e, count, "failed to report usage");
+        let should_flush = tokio::select! {
+            msg = rx.recv() => {
+                if let Some(event) = msg {
+                    buffer.push(event);
+                    false
+                } else {
+                    // Channel closed — flush remaining and exit
+                    flush(&http, &url, &gateway_secret, &mut buffer).await;
+                    break;
                 }
             }
+            _ = ticker.tick() => true,
+        };
+
+        if should_flush {
+            flush(&http, &url, &gateway_secret, &mut buffer).await;
         }
+    }
+
+    tracing::info!("usage reporter shut down");
+}
+
+async fn flush(
+    http: &reqwest::Client,
+    url: &url::Url,
+    gateway_secret: &SecretString,
+    buffer: &mut Vec<UsageEvent>,
+) {
+    if buffer.is_empty() {
+        return;
+    }
+
+    let events = std::mem::take(buffer);
+    let count = events.len();
+
+    if let Err(e) = http
+        .post(url.clone())
+        .header("X-Gateway-Secret", gateway_secret.expose_secret())
+        .json(&serde_json::json!({ "events": events }))
+        .send()
+        .await
+    {
+        tracing::warn!(error = %e, count, "failed to report usage");
     }
 }

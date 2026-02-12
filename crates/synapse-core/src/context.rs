@@ -19,6 +19,8 @@ pub struct RequestContext {
     pub authentication: Authentication,
     /// Billing identity resolved from JWT, if billing is enabled
     pub billing_identity: Option<BillingIdentity>,
+    /// Decrypted BYOK provider keys keyed by provider name
+    pub provider_keys: HashMap<String, SecretString>,
 }
 
 impl RequestContext {
@@ -46,6 +48,7 @@ impl RequestContext {
             client_identity: None,
             authentication: Authentication::default(),
             billing_identity: None,
+            provider_keys: HashMap::new(),
         }
     }
 

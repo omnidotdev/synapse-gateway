@@ -37,6 +37,7 @@ impl ConfigBuilder {
                 telemetry: None,
                 proxy: None,
                 billing: None,
+                auth: None,
             },
         }
     }

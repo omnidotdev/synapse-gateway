@@ -61,7 +61,7 @@ impl LlmState {
             self.resolve_provider(&request.model, &request).await?;
 
         // Resolve API key based on billing mode
-        self.resolve_api_key_for_request(&mut context, &provider_name);
+        self.resolve_api_key_for_request(&mut context, &provider_name)?;
 
         let response = self
             .complete_with_failover(&request, &context, &provider_name, &model_id, &provider)
@@ -102,7 +102,7 @@ impl LlmState {
             self.resolve_provider(&request.model, &request).await?;
 
         // Resolve API key based on billing mode
-        self.resolve_api_key_for_request(&mut context, &provider_name);
+        self.resolve_api_key_for_request(&mut context, &provider_name)?;
 
         let (actual_model, stream) = if self.is_cascade_strategy(&original_model) {
             self.complete_stream_with_cascade(
@@ -733,29 +733,37 @@ impl LlmState {
 
     /// Resolve the API key for a request based on billing mode
     ///
-    /// - BYOK: use the user-provided key from `x-provider-api-key` header
+    /// - BYOK: use the decrypted provider key from the resolved API key.
+    ///   Fails if no key is registered for the target provider.
     /// - Managed: use the managed provider key from billing config
     /// - No billing identity: leave context unchanged (provider uses its
     ///   configured key)
+    ///
+    /// # Errors
+    ///
+    /// Returns `LlmError::InvalidRequest` when a BYOK user has no key
+    /// registered for the target provider
     fn resolve_api_key_for_request(
         &self,
         context: &mut RequestContext,
         provider_name: &str,
-    ) {
+    ) -> Result<(), LlmError> {
         use synapse_core::BillingMode;
 
         let Some(ref identity) = context.billing_identity else {
-            return;
+            return Ok(());
         };
 
         match identity.mode {
             BillingMode::Byok => {
-                // Extract user-provided key from the request header
-                if let Some(value) = context.headers().get("x-provider-api-key")
-                    && let Ok(key_str) = value.to_str()
-                {
-                    context.api_key = Some(SecretString::from(key_str.to_owned()));
-                }
+                // Use decrypted BYOK key for this provider
+                let key = context.provider_keys.get(provider_name).ok_or_else(|| {
+                    LlmError::InvalidRequest(format!(
+                        "no BYOK key registered for provider '{provider_name}'. \
+                         Register one via setProviderKey or use a managed-mode API key"
+                    ))
+                })?;
+                context.api_key = Some(key.clone());
             }
             BillingMode::Managed => {
                 // Use the managed provider key
@@ -764,6 +772,8 @@ impl LlmState {
                 }
             }
         }
+
+        Ok(())
     }
 
     /// Check if the current routing strategy is cascade

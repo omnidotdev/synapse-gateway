@@ -1,6 +1,11 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use axum::extract::Request;
 use axum::middleware::Next;
 use axum::response::Response;
+use secrecy::SecretString;
+use synapse_auth::ResolvedKey;
 use synapse_core::{Authentication, BillingIdentity, RequestContext};
 
 /// Middleware that constructs a `RequestContext` from the incoming request
@@ -15,12 +20,26 @@ pub async fn request_context_middleware(request: Request, next: Next) -> Respons
     let authentication = parts.extensions.get::<Authentication>().cloned().unwrap_or_default();
     let billing_identity = parts.extensions.get::<BillingIdentity>().cloned();
 
+    // Extract BYOK provider keys from resolved API key context
+    let provider_keys = parts
+        .extensions
+        .get::<Arc<ResolvedKey>>()
+        .map(|resolved| {
+            resolved
+                .provider_keys
+                .iter()
+                .map(|pk| (pk.provider.clone(), SecretString::from(pk.decrypted_key.clone())))
+                .collect::<HashMap<_, _>>()
+        })
+        .unwrap_or_default();
+
     let context = RequestContext {
         parts: parts.clone(),
         api_key,
         client_identity,
         authentication,
         billing_identity,
+        provider_keys,
     };
 
     let mut request = Request::from_parts(parts, body);
