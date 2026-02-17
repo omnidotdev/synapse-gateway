@@ -29,6 +29,11 @@ impl EntitlementState {
             cache,
         }
     }
+
+    /// Get a clone of the entitlement cache for sharing with other components
+    pub(crate) fn cache(&self) -> EntitlementCache {
+        self.cache.clone()
+    }
 }
 
 /// Middleware that enforces entitlements and usage limits before processing

@@ -43,6 +43,9 @@ pub(crate) struct LlmStateInner {
     /// Usage recorder for billing metering (billing feature only)
     #[cfg(feature = "billing")]
     pub(crate) usage_recorder: Option<synapse_billing::UsageRecorder>,
+    /// Billing client for pre-request credit checks (billing feature only)
+    #[cfg(feature = "billing")]
+    pub(crate) billing_client: Option<synapse_billing::AetherClient>,
 }
 
 impl LlmState {
@@ -63,6 +66,15 @@ impl LlmState {
         // Resolve API key based on billing mode
         self.resolve_api_key_for_request(&mut context, &provider_name)?;
 
+        // Pre-request credit check for managed billing
+        #[cfg(feature = "billing")]
+        let estimated_cost = self.estimate_request_cost(&context, &provider_name, &request);
+
+        #[cfg(feature = "billing")]
+        if let Some(cost) = estimated_cost {
+            self.check_credits(&context, cost).await?;
+        }
+
         let response = self
             .complete_with_failover(&request, &context, &provider_name, &model_id, &provider)
             .await?;
@@ -79,7 +91,22 @@ impl LlmState {
                 &model_id,
                 usage.prompt_tokens,
                 usage.completion_tokens,
+                &self.inner.model_registry,
+                &self.inner.managed_margins,
             );
+        }
+
+        // Post-completion credit deduction based on actual usage
+        #[cfg(feature = "billing")]
+        if let Some(ref usage) = response.usage {
+            self.deduct_credits_for_usage(
+                &context,
+                &provider_name,
+                &model_id,
+                usage.prompt_tokens,
+                usage.completion_tokens,
+            )
+            .await;
         }
 
         Ok(response)
@@ -103,6 +130,15 @@ impl LlmState {
 
         // Resolve API key based on billing mode
         self.resolve_api_key_for_request(&mut context, &provider_name)?;
+
+        // Pre-request credit check for managed billing
+        #[cfg(feature = "billing")]
+        let estimated_cost = self.estimate_request_cost(&context, &provider_name, &request);
+
+        #[cfg(feature = "billing")]
+        if let Some(cost) = estimated_cost {
+            self.check_credits(&context, cost).await?;
+        }
 
         let (actual_model, stream) = if self.is_cascade_strategy(&original_model) {
             self.complete_stream_with_cascade(
@@ -129,10 +165,12 @@ impl LlmState {
         #[cfg(feature = "billing")]
         if let Some(ref recorder) = self.inner.usage_recorder {
             let recorder = recorder.clone();
+            let inner = Arc::clone(&self.inner);
             let ctx = context.clone();
             let prov = provider_name.clone();
             let mdl = model_id.clone();
 
+            let billing_client = inner.billing_client.clone();
             let metered_stream = stream.map(move |item| {
                 if let Ok(StreamEvent::Usage(ref usage)) = item {
                     dispatch_usage_event(
@@ -142,7 +180,23 @@ impl LlmState {
                         &mdl,
                         usage.prompt_tokens,
                         usage.completion_tokens,
+                        &inner.model_registry,
+                        &inner.managed_margins,
                     );
+
+                    // Deduct credits for actual usage (fire-and-forget)
+                    if let Some(ref client) = billing_client {
+                        spawn_credit_deduction(
+                            client.clone(),
+                            &ctx,
+                            &prov,
+                            &mdl,
+                            usage.prompt_tokens,
+                            usage.completion_tokens,
+                            &inner.model_registry,
+                            &inner.managed_margins,
+                        );
+                    }
                 }
                 item
             });
@@ -208,6 +262,8 @@ impl LlmState {
                 managed_margins: HashMap::new(),
                 #[cfg(feature = "billing")]
                 usage_recorder: None,
+                #[cfg(feature = "billing")]
+                billing_client: None,
             }),
         })
     }
@@ -243,6 +299,20 @@ impl LlmState {
         Arc::get_mut(&mut self.inner)
             .expect("set_usage_recorder must be called before state is shared")
             .usage_recorder = Some(recorder);
+    }
+
+    /// Attach a billing client for pre-request credit checks
+    ///
+    /// Must be called before the state is shared with handlers.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called after the inner `Arc` has been cloned
+    #[cfg(feature = "billing")]
+    pub fn set_billing_client(&mut self, client: synapse_billing::AetherClient) {
+        Arc::get_mut(&mut self.inner)
+            .expect("set_billing_client must be called before state is shared")
+            .billing_client = Some(client);
     }
 
     /// List all available models across providers
@@ -788,8 +858,213 @@ impl LlmState {
     }
 }
 
+/// Estimate the cost of a request based on input tokens
+///
+/// Returns `None` if the user is not in managed billing mode
+#[cfg(feature = "billing")]
+impl LlmState {
+    fn estimate_request_cost(
+        &self,
+        context: &RequestContext,
+        provider_name: &str,
+        request: &CompletionRequest,
+    ) -> Option<f64> {
+        let identity = context.billing_identity.as_ref()?;
+        if identity.mode != synapse_core::BillingMode::Managed {
+            return None;
+        }
+
+        // Estimate input tokens from message content
+        let estimated_input: usize = request
+            .messages
+            .iter()
+            .map(|m| m.content.as_text().len() / 4)
+            .sum();
+
+        // Estimate output tokens conservatively (use max_tokens if set, else default)
+        let estimated_output = request.params.max_tokens.unwrap_or(1024) as usize;
+
+        let cost = self
+            .inner
+            .model_registry
+            .find(provider_name, &request.model)
+            .map_or(0.0, |profile| {
+                let base = profile.estimate_cost(estimated_input, estimated_output);
+                let margin = self
+                    .inner
+                    .managed_margins
+                    .get(provider_name)
+                    .copied()
+                    .unwrap_or(1.0);
+                base * margin
+            });
+
+        if cost > 0.0 { Some(cost) } else { None }
+    }
+
+    /// Check if the user has sufficient credits for the estimated cost
+    async fn check_credits(
+        &self,
+        context: &RequestContext,
+        estimated_cost: f64,
+    ) -> Result<(), LlmError> {
+        let Some(ref client) = self.inner.billing_client else {
+            return Ok(());
+        };
+
+        let Some(ref identity) = context.billing_identity else {
+            return Ok(());
+        };
+
+        match client
+            .check_credits(&identity.entity_type, &identity.entity_id, estimated_cost)
+            .await
+        {
+            Ok(response) => {
+                if !response.sufficient {
+                    return Err(LlmError::InsufficientCredits {
+                        message: format!(
+                            "estimated cost ${:.4} exceeds available balance ${:.4}",
+                            estimated_cost, response.balance
+                        ),
+                    });
+                }
+                Ok(())
+            }
+            Err(e) => {
+                // Log but don't block the request if the credit check fails
+                tracing::warn!(
+                    error = %e,
+                    entity_id = %identity.entity_id,
+                    "credit check failed, allowing request"
+                );
+                Ok(())
+            }
+        }
+    }
+
+    /// Deduct credits after a successful completion based on actual usage
+    async fn deduct_credits_for_usage(
+        &self,
+        context: &RequestContext,
+        provider_name: &str,
+        model_id: &str,
+        input_tokens: u32,
+        output_tokens: u32,
+    ) {
+        let Some(ref client) = self.inner.billing_client else {
+            return;
+        };
+
+        let Some(ref identity) = context.billing_identity else {
+            return;
+        };
+
+        if identity.mode != synapse_core::BillingMode::Managed {
+            return;
+        }
+
+        let actual_cost = self
+            .inner
+            .model_registry
+            .find(provider_name, model_id)
+            .map_or(0.0, |profile| {
+                let base = profile.estimate_cost(input_tokens as usize, output_tokens as usize);
+                let margin = self
+                    .inner
+                    .managed_margins
+                    .get(provider_name)
+                    .copied()
+                    .unwrap_or(1.0);
+                base * margin
+            });
+
+        if actual_cost <= 0.0 {
+            return;
+        }
+
+        let request = synapse_billing::CreditDeductRequest {
+            amount: actual_cost,
+            description: Some(format!("{provider_name}/{model_id}")),
+            idempotency_key: Some(uuid::Uuid::new_v4().to_string()),
+            reference_type: Some("completion".to_owned()),
+            reference_id: None,
+        };
+
+        if let Err(e) = client
+            .deduct_credits(&identity.entity_type, &identity.entity_id, &request)
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                entity_id = %identity.entity_id,
+                cost = actual_cost,
+                "failed to deduct credits after completion"
+            );
+        }
+    }
+}
+
+/// Spawn a fire-and-forget credit deduction task for streaming usage events
+#[cfg(feature = "billing")]
+#[allow(clippy::too_many_arguments)]
+fn spawn_credit_deduction(
+    client: synapse_billing::AetherClient,
+    context: &RequestContext,
+    provider_name: &str,
+    model_id: &str,
+    input_tokens: u32,
+    output_tokens: u32,
+    model_registry: &ModelRegistry,
+    managed_margins: &HashMap<String, f64>,
+) {
+    let Some(ref identity) = context.billing_identity else {
+        return;
+    };
+
+    if identity.mode != synapse_core::BillingMode::Managed {
+        return;
+    }
+
+    let actual_cost = model_registry
+        .find(provider_name, model_id)
+        .map_or(0.0, |profile| {
+            let base = profile.estimate_cost(input_tokens as usize, output_tokens as usize);
+            let margin = managed_margins.get(provider_name).copied().unwrap_or(1.0);
+            base * margin
+        });
+
+    if actual_cost <= 0.0 {
+        return;
+    }
+
+    let entity_type = identity.entity_type.clone();
+    let entity_id = identity.entity_id.clone();
+    let desc = format!("{provider_name}/{model_id}");
+
+    tokio::spawn(async move {
+        let request = synapse_billing::CreditDeductRequest {
+            amount: actual_cost,
+            description: Some(desc),
+            idempotency_key: Some(uuid::Uuid::new_v4().to_string()),
+            reference_type: Some("completion".to_owned()),
+            reference_id: None,
+        };
+
+        if let Err(e) = client.deduct_credits(&entity_type, &entity_id, &request).await {
+            tracing::warn!(
+                error = %e,
+                entity_id = %entity_id,
+                cost = actual_cost,
+                "failed to deduct credits after streaming completion"
+            );
+        }
+    });
+}
+
 /// Dispatch a usage event to the billing recorder
 #[cfg(feature = "billing")]
+#[allow(clippy::too_many_arguments)]
 fn dispatch_usage_event(
     recorder: &synapse_billing::UsageRecorder,
     context: &RequestContext,
@@ -797,6 +1072,8 @@ fn dispatch_usage_event(
     model_id: &str,
     input_tokens: u32,
     output_tokens: u32,
+    model_registry: &ModelRegistry,
+    managed_margins: &HashMap<String, f64>,
 ) {
     let Some(ref identity) = context.billing_identity else {
         return;
@@ -807,6 +1084,14 @@ fn dispatch_usage_event(
         return;
     }
 
+    let estimated_cost_usd = model_registry
+        .find(provider_name, model_id)
+        .map_or(0.0, |profile| {
+            let base = profile.estimate_cost(input_tokens as usize, output_tokens as usize);
+            let margin = managed_margins.get(provider_name).copied().unwrap_or(1.0);
+            base * margin
+        });
+
     let idempotency_key = uuid::Uuid::new_v4().to_string();
 
     recorder.record(synapse_billing::UsageEvent {
@@ -816,7 +1101,7 @@ fn dispatch_usage_event(
         provider: provider_name.to_owned(),
         input_tokens,
         output_tokens,
-        estimated_cost_usd: 0.0, // TODO: calculate from model profiles + margin
+        estimated_cost_usd,
         idempotency_key,
     });
 }

@@ -5,8 +5,8 @@ use url::Url;
 
 use crate::error::BillingError;
 use crate::types::{
-    CheckUsageResponse, EntitlementCheckResponse, EntitlementsResponse, RecordUsageRequest,
-    RecordUsageResponse,
+    CheckUsageResponse, CreditCheckResponse, CreditDeductRequest, CreditDeductResponse,
+    EntitlementCheckResponse, EntitlementsResponse, RecordUsageRequest, RecordUsageResponse,
 };
 
 /// Async HTTP client for the Aether billing API
@@ -196,6 +196,88 @@ impl AetherClient {
             .http
             .get(url)
             .header("x-service-api-key", self.service_api_key.expose_secret())
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            Ok(response.json().await?)
+        } else {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            Err(BillingError::Api { status, message })
+        }
+    }
+
+    /// Check whether an entity has sufficient credits
+    ///
+    /// GET `/credits/:appId/:entityType/:entityId/check?amount=:amount`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or Aether returns an error
+    pub async fn check_credits(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+        amount: f64,
+    ) -> Result<CreditCheckResponse, BillingError> {
+        let url = self
+            .base_url
+            .join(&format!(
+                "credits/{}/{entity_type}/{entity_id}/check",
+                self.app_id
+            ))
+            .map_err(|e| BillingError::Api {
+                status: 0,
+                message: format!("invalid URL: {e}"),
+            })?;
+
+        let response = self
+            .http
+            .get(url)
+            .header("x-service-api-key", self.service_api_key.expose_secret())
+            .query(&[("amount", amount.to_string())])
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            Ok(response.json().await?)
+        } else {
+            let status = response.status().as_u16();
+            let message = response.text().await.unwrap_or_default();
+            Err(BillingError::Api { status, message })
+        }
+    }
+
+    /// Deduct credits from an entity's balance
+    ///
+    /// POST `/credits/:appId/:entityType/:entityId/deduct`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP request fails or Aether returns an error
+    pub async fn deduct_credits(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+        request: &CreditDeductRequest,
+    ) -> Result<CreditDeductResponse, BillingError> {
+        let url = self
+            .base_url
+            .join(&format!(
+                "credits/{}/{entity_type}/{entity_id}/deduct",
+                self.app_id
+            ))
+            .map_err(|e| BillingError::Api {
+                status: 0,
+                message: format!("invalid URL: {e}"),
+            })?;
+
+        let response = self
+            .http
+            .post(url)
+            .header("x-service-api-key", self.service_api_key.expose_secret())
+            .json(request)
             .send()
             .await?;
 

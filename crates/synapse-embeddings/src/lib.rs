@@ -42,12 +42,10 @@ pub fn endpoint_router() -> Router<Arc<Server>> {
 /// Handle embedding requests
 async fn embed(
     State(server): State<Arc<Server>>,
+    axum::Extension(context): axum::Extension<RequestContext>,
     Json(request): Json<EmbeddingRequest>,
 ) -> Result<Json<EmbeddingResponse>> {
     tracing::debug!("Embeddings handler called for model: {}", request.model);
-
-    // TODO: extract `RequestContext` from middleware once wired
-    let context = RequestContext::empty();
 
     let response = server.embed(&request, &context).await?;
 

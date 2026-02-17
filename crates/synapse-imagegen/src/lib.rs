@@ -42,12 +42,10 @@ pub fn endpoint_router() -> Router<Arc<Server>> {
 /// Handle image generation requests
 async fn generate(
     State(server): State<Arc<Server>>,
+    axum::Extension(context): axum::Extension<RequestContext>,
     Json(request): Json<ImageRequest>,
 ) -> Result<Json<ImageResponse>> {
     tracing::debug!("Image generation handler called for model: {}", request.model);
-
-    // TODO: extract `RequestContext` from middleware once wired
-    let context = RequestContext::empty();
 
     let response = server.generate(&request, &context).await?;
 

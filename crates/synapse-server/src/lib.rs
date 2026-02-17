@@ -9,6 +9,7 @@ mod health;
 mod invalidate;
 mod rate_limit;
 mod request_context;
+mod webhook;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -209,6 +210,20 @@ impl Server {
                 billing_config.service_api_key.clone(),
             )?;
             let ent_state = entitlement::EntitlementState::new(aether_client, billing_config.clone());
+
+            // Entitlement webhook endpoint (shares cache with middleware)
+            if let Some(ref auth_config) = config.auth {
+                let webhook_state = webhook::WebhookState {
+                    cache: ent_state.cache(),
+                    gateway_secret: auth_config.gateway_secret.clone(),
+                };
+                app = app.route(
+                    "/webhooks/entitlements",
+                    axum::routing::post(webhook::entitlement_webhook_handler)
+                        .with_state(webhook_state),
+                );
+            }
+
             app = app.layer(axum::middleware::from_fn(move |req, next| {
                 let state = ent_state.clone();
                 async move { entitlement::entitlement_middleware(state, req, next).await }

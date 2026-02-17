@@ -83,14 +83,12 @@ impl EntitlementCache {
     }
 
     /// Invalidate a specific cached entitlement
-    #[allow(dead_code)]
     pub fn invalidate_entitlement(&self, entity_type: &str, entity_id: &str, feature_key: &str) {
         let key = format!("{entity_type}:{entity_id}:{feature_key}");
         self.entitlements.invalidate(&key);
     }
 
     /// Invalidate a specific cached usage check
-    #[allow(dead_code)]
     pub fn invalidate_usage(&self, entity_type: &str, entity_id: &str, meter_key: &str) {
         let key = format!("{entity_type}:{entity_id}:{meter_key}");
         self.usage.invalidate(&key);

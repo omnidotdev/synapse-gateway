@@ -8,3 +8,4 @@ pub mod types;
 pub use client::AetherClient;
 pub use error::BillingError;
 pub use recorder::{MeterKeys, UsageEvent, UsageRecorder};
+pub use types::{CreditCheckResponse, CreditDeductRequest, CreditDeductResponse};

@@ -36,6 +36,10 @@ pub enum LlmError {
         retry_after: u64,
     },
 
+    /// Client has insufficient credits for the estimated request cost
+    #[error("insufficient credits: {message}")]
+    InsufficientCredits { message: String },
+
     /// Unexpected internal error
     #[error("internal error: {0}")]
     Internal(#[from] anyhow::Error),
@@ -63,6 +67,7 @@ impl HttpError for LlmError {
             Self::InvalidRequest(_) => StatusCode::BAD_REQUEST,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
+            Self::InsufficientCredits { .. } => StatusCode::PAYMENT_REQUIRED,
         }
     }
 
@@ -74,6 +79,7 @@ impl HttpError for LlmError {
             Self::InvalidRequest(_) => "invalid_request_error",
             Self::Unauthorized => "authentication_error",
             Self::RateLimited { .. } => "rate_limit_error",
+            Self::InsufficientCredits { .. } => "insufficient_credits_error",
             Self::Internal(_) => "internal_error",
         }
     }

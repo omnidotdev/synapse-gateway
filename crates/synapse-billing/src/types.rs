@@ -53,3 +53,52 @@ pub struct EntitlementsResponse {
     #[serde(default)]
     pub entitlement_version: Option<u64>,
 }
+
+/// Request to check credit balance sufficiency
+#[derive(Debug, Clone, Serialize)]
+pub struct CreditCheckRequest {
+    /// Amount of credits required
+    pub amount: f64,
+}
+
+/// Response from checking credit balance
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreditCheckResponse {
+    /// Whether sufficient credits are available
+    pub sufficient: bool,
+    /// Current credit balance
+    #[serde(default)]
+    pub balance: f64,
+}
+
+/// Request to deduct credits
+#[derive(Debug, Clone, Serialize)]
+pub struct CreditDeductRequest {
+    /// Amount to deduct
+    pub amount: f64,
+    /// Description of the charge
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Unique key for idempotent deduction
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
+    /// Reference type (e.g. "completion")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference_type: Option<String>,
+    /// Reference identifier
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference_id: Option<String>,
+}
+
+/// Response from deducting credits
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreditDeductResponse {
+    /// Whether the deduction was successful
+    pub success: bool,
+    /// Balance after deduction
+    #[serde(default)]
+    pub balance_after: f64,
+    /// Transaction ID
+    #[serde(default)]
+    pub transaction_id: Option<String>,
+}
