@@ -8,7 +8,7 @@ use synapse_core::{BillingIdentity, BillingMode};
 /// Authenticate requests via API key
 ///
 /// Extracts Bearer token from Authorization header. If it starts with
-/// `sk-syn-`, resolves it via synapse-api. Skips auth for public paths
+/// `synapse_`, resolves it via synapse-api. Skips auth for public paths
 /// and passes through non-synapse tokens for existing auth flows.
 pub async fn auth_middleware(
     resolver: ApiKeyResolver,
@@ -33,7 +33,7 @@ pub async fn auth_middleware(
         return next.run(request).await;
     };
 
-    if !token.starts_with("sk-syn-") {
+    if !token.starts_with("synapse_") {
         return next.run(request).await;
     }
 
