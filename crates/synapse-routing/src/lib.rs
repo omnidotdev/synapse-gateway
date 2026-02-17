@@ -44,6 +44,8 @@ pub enum RoutingReason {
     CascadeEscalated,
     /// Selected by multi-objective score optimization
     ScoreOptimized,
+    /// Selected by ONNX ML classifier
+    OnnxClassified,
 }
 
 /// Result of a routing decision
