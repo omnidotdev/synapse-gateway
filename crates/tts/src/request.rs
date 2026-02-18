@@ -60,8 +60,9 @@ where
         }
 
         let bytes = axum::body::to_bytes(body, BODY_LIMIT_BYTES).await.map_err(|err| {
-            let source = std::error::Error::source(&err).unwrap();
-            if source.is::<http_body_util::LengthLimitError>() {
+            if std::error::Error::source(&err)
+                .is_some_and(|source| source.is::<http_body_util::LengthLimitError>())
+            {
                 (
                     axum::http::StatusCode::PAYLOAD_TOO_LARGE,
                     format!("Request body is too large, limit is {BODY_LIMIT_BYTES} bytes"),

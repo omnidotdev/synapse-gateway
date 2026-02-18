@@ -74,11 +74,6 @@ impl ToolIndex {
     }
 
     /// Search tools by query string
-    ///
-    /// # Panics
-    ///
-    /// Panics if the schema fields created during `build` are missing,
-    /// which should never happen in practice
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<ToolSearchResult>, McpError> {
         let searcher = self.reader.searcher();
         let query = self
@@ -90,10 +85,11 @@ impl ToolIndex {
             .search(&query, &TopDocs::with_limit(limit))
             .map_err(|e| McpError::Internal(anyhow::anyhow!("search failed: {e}")))?;
 
-        let qualified_name_field = self.schema.get_field("qualified_name").expect("field exists");
-        let tool_name_field = self.schema.get_field("tool_name").expect("field exists");
-        let description_field = self.schema.get_field("description").expect("field exists");
-        let server_name_field = self.schema.get_field("server_name").expect("field exists");
+        let field_err = |name| McpError::Internal(anyhow::anyhow!("missing schema field: {name}"));
+        let qualified_name_field = self.schema.get_field("qualified_name").map_err(|_| field_err("qualified_name"))?;
+        let tool_name_field = self.schema.get_field("tool_name").map_err(|_| field_err("tool_name"))?;
+        let description_field = self.schema.get_field("description").map_err(|_| field_err("description"))?;
+        let server_name_field = self.schema.get_field("server_name").map_err(|_| field_err("server_name"))?;
 
         let mut results = Vec::with_capacity(top_docs.len());
         for (score, doc_address) in top_docs {

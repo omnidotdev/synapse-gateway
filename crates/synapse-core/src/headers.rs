@@ -201,7 +201,7 @@ fn apply_forward(incoming: &HeaderMap, forward: &HeaderForward, result: &mut Hea
             let headers_to_forward: Vec<_> = incoming
                 .keys()
                 .filter(|k| !is_header_denied(k) && pattern.0.is_match(k.as_str()))
-                .map(|k| (k.clone(), incoming.get(k).cloned().unwrap()))
+                .filter_map(|k| incoming.get(k).cloned().map(|v| (k.clone(), v)))
                 .collect();
 
             for (original_name, value) in headers_to_forward {
