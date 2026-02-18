@@ -29,6 +29,11 @@ impl SpeechResponse {
         axum::response::Response::builder()
             .header(http::header::CONTENT_TYPE, self.content_type)
             .body(axum::body::Body::from(self.audio))
-            .expect("Failed to build speech response")
+            .unwrap_or_else(|_| {
+                axum::response::Response::builder()
+                    .status(http::StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(axum::body::Body::empty())
+                    .unwrap()
+            })
     }
 }
