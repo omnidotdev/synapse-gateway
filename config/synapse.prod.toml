@@ -130,7 +130,7 @@ api_key = "{{ env.OPENAI_API_KEY }}"
 transport = "stdio"
 command = "npx"
 args = ["-y", "@anthropic-ai/mcp-server-brave-search"]
-env = { BRAVE_API_KEY = "{{ env.BRAVE_API_KEY }}" }
+env = { BRAVE_API_KEY = "{{ env.BRAVE_API_KEY | default("") }}" }
 
 [mcp.servers.fetch.type]
 transport = "stdio"
