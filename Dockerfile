@@ -44,8 +44,8 @@ LABEL org.opencontainers.image.url='https://synapse.omni.dev' \
 
 WORKDIR /synapse
 
-# Install curl for health checks, Node.js for MCP tool servers (npx)
-RUN apk add --no-cache curl nodejs npm
+# Install curl for health checks, Node.js (npx) and uv (uvx) for MCP tool servers
+RUN apk add --no-cache curl nodejs npm uv
 
 # Create user and directories
 # wolfi-base uses adduser from busybox

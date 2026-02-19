@@ -129,13 +129,13 @@ api_key = "{{ env.OPENAI_API_KEY }}"
 [mcp.servers.brave_search.type]
 transport = "stdio"
 command = "npx"
-args = ["-y", "@anthropic-ai/mcp-server-brave-search"]
+args = ["-y", "@modelcontextprotocol/server-brave-search"]
 env = { BRAVE_API_KEY = "{{ env.BRAVE_API_KEY | default("") }}" }
 
 [mcp.servers.fetch.type]
 transport = "stdio"
-command = "npx"
-args = ["-y", "@anthropic-ai/mcp-server-fetch"]
+command = "uvx"
+args = ["mcp-server-fetch"]
 
 # ------------------------------------
 # API Key Authentication
