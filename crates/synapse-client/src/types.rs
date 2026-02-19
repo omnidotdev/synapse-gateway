@@ -338,6 +338,20 @@ pub struct ToolResult {
     pub is_error: Option<bool>,
 }
 
+impl ToolResult {
+    /// Concatenate text content blocks into a single string
+    pub fn text(&self) -> String {
+        self.content
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
 /// Content block in a tool result
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -354,6 +368,19 @@ pub enum ContentBlock {
         /// MIME type
         mime_type: String,
     },
+}
+
+impl From<McpTool> for ToolDefinition {
+    fn from(t: McpTool) -> Self {
+        Self {
+            tool_type: "function".to_owned(),
+            function: FunctionDefinition {
+                name: t.name,
+                description: Some(t.description),
+                parameters: Some(t.input_schema),
+            },
+        }
+    }
 }
 
 /// Tool search result

@@ -14,6 +14,16 @@ use crate::types::{
     ChatEvent, ChatRequest, FunctionCall, FunctionDefinition, Message, ToolCall, ToolDefinition,
 };
 
+impl From<crate::McpTool> for agent_core::types::Tool {
+    fn from(t: crate::McpTool) -> Self {
+        Self {
+            name: t.name,
+            description: t.description,
+            input_schema: t.input_schema,
+        }
+    }
+}
+
 #[async_trait]
 impl LlmProvider for SynapseClient {
     fn name(&self) -> &'static str {
