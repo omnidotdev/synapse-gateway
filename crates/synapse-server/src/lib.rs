@@ -1,5 +1,4 @@
 mod auth;
-mod billing_identity;
 mod client_id;
 mod cors;
 mod csrf;
@@ -138,7 +137,55 @@ impl Server {
             }));
         }
 
-        // API key authentication
+        // Client identification
+        if let Some(ref client_id_config) = config.server.client_identification {
+            let cid_config = client_id_config.clone();
+            app = app.layer(axum::middleware::from_fn(move |req, next| {
+                let config = cid_config.clone();
+                async move { client_id::client_id_middleware(config, req, next).await }
+            }));
+        }
+
+        // Rate limiting
+        if let Some(ref rl_config) = config.server.rate_limit {
+            let limiter = Arc::new(synapse_ratelimit::create_request_limiter(rl_config)?);
+            app = app.layer(axum::middleware::from_fn(move |req, next| {
+                let limiter = Arc::clone(&limiter);
+                async move { rate_limit::rate_limit_middleware_arc(limiter, req, next).await }
+            }));
+        }
+
+        // Entitlement gate — inner to auth, so auth runs first and sets BillingIdentity
+        if let Some(ref billing_config) = config.billing
+            && billing_config.enabled
+        {
+            let aether_client = synapse_billing::AetherClient::new(
+                billing_config.aether_url.clone(),
+                billing_config.app_id.clone(),
+                billing_config.service_api_key.clone(),
+            )?;
+            let ent_state = entitlement::EntitlementState::new(aether_client, billing_config.clone());
+
+            // Entitlement webhook endpoint (shares cache with middleware)
+            if let Some(ref auth_config) = config.auth {
+                let webhook_state = webhook::WebhookState {
+                    cache: ent_state.cache(),
+                    gateway_secret: auth_config.gateway_secret.clone(),
+                };
+                app = app.route(
+                    "/webhooks/entitlements",
+                    axum::routing::post(webhook::entitlement_webhook_handler)
+                        .with_state(webhook_state),
+                );
+            }
+
+            app = app.layer(axum::middleware::from_fn(move |req, next| {
+                let state = ent_state.clone();
+                async move { entitlement::entitlement_middleware(state, req, next).await }
+            }));
+        }
+
+        // API key authentication — outermost; processes all requests first and sets BillingIdentity
         if let Some(ref auth_config) = config.auth
             && auth_config.enabled
         {
@@ -176,65 +223,6 @@ impl Server {
                 async move {
                     auth::auth_middleware(resolver, public_paths, reporter, req, next).await
                 }
-            }));
-        }
-
-        // Billing identity (after OAuth, before ClientId)
-        if let Some(ref billing_config) = config.billing
-            && billing_config.enabled
-        {
-            let billing = billing_config.clone();
-            app = app.layer(axum::middleware::from_fn(move |req, next| {
-                let config = billing.clone();
-                async move { billing_identity::billing_identity_middleware(config, req, next).await }
-            }));
-        }
-
-        // Client identification
-        if let Some(ref client_id_config) = config.server.client_identification {
-            let cid_config = client_id_config.clone();
-            app = app.layer(axum::middleware::from_fn(move |req, next| {
-                let config = cid_config.clone();
-                async move { client_id::client_id_middleware(config, req, next).await }
-            }));
-        }
-
-        // Rate limiting
-        if let Some(ref rl_config) = config.server.rate_limit {
-            let limiter = Arc::new(synapse_ratelimit::create_request_limiter(rl_config)?);
-            app = app.layer(axum::middleware::from_fn(move |req, next| {
-                let limiter = Arc::clone(&limiter);
-                async move { rate_limit::rate_limit_middleware_arc(limiter, req, next).await }
-            }));
-        }
-
-        // Entitlement gate (after billing identity, before request context)
-        if let Some(ref billing_config) = config.billing
-            && billing_config.enabled
-        {
-            let aether_client = synapse_billing::AetherClient::new(
-                billing_config.aether_url.clone(),
-                billing_config.app_id.clone(),
-                billing_config.service_api_key.clone(),
-            )?;
-            let ent_state = entitlement::EntitlementState::new(aether_client, billing_config.clone());
-
-            // Entitlement webhook endpoint (shares cache with middleware)
-            if let Some(ref auth_config) = config.auth {
-                let webhook_state = webhook::WebhookState {
-                    cache: ent_state.cache(),
-                    gateway_secret: auth_config.gateway_secret.clone(),
-                };
-                app = app.route(
-                    "/webhooks/entitlements",
-                    axum::routing::post(webhook::entitlement_webhook_handler)
-                        .with_state(webhook_state),
-                );
-            }
-
-            app = app.layer(axum::middleware::from_fn(move |req, next| {
-                let state = ent_state.clone();
-                async move { entitlement::entitlement_middleware(state, req, next).await }
             }));
         }
 

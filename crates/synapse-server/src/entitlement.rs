@@ -43,10 +43,9 @@ impl EntitlementState {
 /// 3. Passes through if all checks pass
 pub async fn entitlement_middleware(state: EntitlementState, request: Request, next: Next) -> Response {
     let Some(identity) = request.extensions().get::<BillingIdentity>() else {
-        // No billing identity means billing middleware didn't run or
-        // no valid auth — this shouldn't happen if middleware stack is
-        // correct, but fail closed
-        return (StatusCode::INTERNAL_SERVER_ERROR, "missing billing identity").into_response();
+        // No billing identity — request is unauthenticated or on a public path;
+        // auth middleware already passed it through, so skip entitlement checks
+        return next.run(request).await;
     };
 
     let entity_type = &identity.entity_type;
