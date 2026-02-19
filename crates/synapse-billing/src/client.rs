@@ -116,7 +116,7 @@ impl AetherClient {
             .http
             .get(url)
             .header("x-service-api-key", self.service_api_key.expose_secret())
-            .query(&[("additional_usage", additional_usage.to_string())])
+            .query(&[("additionalUsage", additional_usage.to_string())])
             .send()
             .await?;
 
@@ -354,7 +354,9 @@ mod tests {
             .and(path("/usage/test-app/user/usr_123/input_tokens/record"))
             .and(header("x-service-api-key", "test-key"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "accepted": true
+                "billingAccountId": "ba_123",
+                "meterId": "meter_456",
+                "eventId": "evt_789"
             })))
             .mount(&server)
             .await;
@@ -378,7 +380,7 @@ mod tests {
             .and(header("x-service-api-key", "test-key"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "allowed": true,
-                "current_usage": 5000.0,
+                "current": 5000.0,
                 "limit": 100_000.0
             })))
             .mount(&server)
@@ -402,8 +404,8 @@ mod tests {
             .and(path("/entitlements/test-app/user/usr_123/api_access/check"))
             .and(header("x-service-api-key", "test-key"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "has_access": true,
-                "entitlement_version": 42
+                "hasEntitlement": true,
+                "version": 42
             })))
             .mount(&server)
             .await;
@@ -457,17 +459,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_entitlements_returns_map() {
+    async fn get_entitlements_returns_list() {
         let server = MockServer::start().await;
 
         Mock::given(method("GET"))
             .and(path("/entitlements/test-app/user/usr_123"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "entitlements": {
-                    "api_access": true,
-                    "premium_models": false
-                },
-                "entitlement_version": 5
+                "billingAccountId": "ba_123",
+                "entityType": "user",
+                "entityId": "usr_123",
+                "entitlementVersion": 5,
+                "entitlements": [
+                    {
+                        "id": "ent_1",
+                        "appId": "test-app",
+                        "featureKey": "api_access",
+                        "value": 1,
+                        "source": "subscription",
+                        "validFrom": "2025-01-01T00:00:00Z",
+                        "validUntil": null
+                    },
+                    {
+                        "id": "ent_2",
+                        "appId": "test-app",
+                        "featureKey": "premium_models",
+                        "value": 0,
+                        "source": "subscription",
+                        "validFrom": "2025-01-01T00:00:00Z",
+                        "validUntil": null
+                    }
+                ]
             })))
             .mount(&server)
             .await;
@@ -478,7 +499,8 @@ mod tests {
 
         assert!(result.is_ok());
         let resp = result.unwrap();
-        assert_eq!(resp.entitlements.get("api_access"), Some(&true));
-        assert_eq!(resp.entitlements.get("premium_models"), Some(&false));
+        assert_eq!(resp.entitlements.len(), 2);
+        assert_eq!(resp.entitlements[0].feature_key, "api_access");
+        assert_eq!(resp.entitlement_version, Some(5));
     }
 }

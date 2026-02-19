@@ -126,10 +126,30 @@ api_key = "{{ env.OPENAI_API_KEY }}"
 # API Key Authentication
 # ------------------------------------
 
-# [auth]
-# enabled = true
-# api_url = "http://synapse-api.railway.internal:4000"
-# gateway_secret = "{{ env.GATEWAY_SECRET }}"
-# cache_ttl_seconds = 60
-# cache_capacity = 10000
-# public_paths = ["/health"]
+[auth]
+enabled = true
+api_url = "http://synapse-api.railway.internal:4000"
+gateway_secret = "{{ env.GATEWAY_SECRET }}"
+cache_ttl_seconds = 60
+cache_capacity = 10000
+public_paths = ["/health"]
+
+# ------------------------------------
+# Billing (Aether integration)
+# ------------------------------------
+
+[billing]
+enabled = true
+aether_url = "{{ env.AETHER_URL }}"
+service_api_key = "{{ env.AETHER_SERVICE_API_KEY }}"
+app_id = "synapse"
+mode = "hybrid"
+fail_mode = "open"
+
+[billing.managed_providers.openai]
+api_key = "{{ env.OPENAI_API_KEY }}"
+margin = 1.2
+
+[billing.managed_providers.anthropic]
+api_key = "{{ env.ANTHROPIC_API_KEY }}"
+margin = 1.15

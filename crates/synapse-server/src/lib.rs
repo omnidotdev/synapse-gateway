@@ -76,6 +76,14 @@ impl Server {
             };
             let recorder = synapse_billing::UsageRecorder::new(recorder_client, meter_keys);
             llm_state.set_usage_recorder(recorder);
+
+            // Attach billing client for pre-request credit checks
+            let credit_client = synapse_billing::AetherClient::new(
+                billing_config.aether_url.clone(),
+                billing_config.app_id.clone(),
+                billing_config.service_api_key.clone(),
+            )?;
+            llm_state.set_billing_client(credit_client);
         }
 
         let mcp_state = Arc::new(McpState::new(&config.mcp).await?);

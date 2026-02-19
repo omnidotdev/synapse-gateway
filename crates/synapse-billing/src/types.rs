@@ -15,10 +15,18 @@ pub struct RecordUsageRequest {
 }
 
 /// Response from recording usage
+///
+/// Aether returns `{ billingAccountId, meterId, eventId, ... }` on success,
+/// so `accepted` defaults to `true` when deserialization succeeds (HTTP 200)
 #[derive(Debug, Clone, Deserialize)]
 pub struct RecordUsageResponse {
     /// Whether the recording was accepted
+    #[serde(default = "default_true")]
     pub accepted: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Response from checking usage against limits
@@ -27,7 +35,7 @@ pub struct CheckUsageResponse {
     /// Whether the additional usage is within limits
     pub allowed: bool,
     /// Current usage for this meter
-    #[serde(default)]
+    #[serde(default, alias = "current")]
     pub current_usage: f64,
     /// Configured limit for this meter
     #[serde(default)]
@@ -38,19 +46,33 @@ pub struct CheckUsageResponse {
 #[derive(Debug, Clone, Deserialize)]
 pub struct EntitlementCheckResponse {
     /// Whether access to the feature is granted
+    #[serde(alias = "hasEntitlement")]
     pub has_access: bool,
     /// Entitlement version for cache invalidation
-    #[serde(default)]
+    #[serde(default, alias = "version")]
     pub entitlement_version: Option<u64>,
+}
+
+/// Single entitlement entry from Aether
+#[derive(Debug, Clone, Deserialize)]
+pub struct EntitlementEntry {
+    /// Feature key
+    #[serde(alias = "featureKey")]
+    pub feature_key: String,
+    /// Entitlement value (number, boolean as string, or JSON)
+    pub value: Option<serde_json::Value>,
+    /// Source of the entitlement (subscription, manual, etc.)
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 /// Response listing all entitlements for an entity
 #[derive(Debug, Clone, Deserialize)]
 pub struct EntitlementsResponse {
-    /// Map of feature key → access granted
-    pub entitlements: HashMap<String, bool>,
+    /// List of entitlements
+    pub entitlements: Vec<EntitlementEntry>,
     /// Entitlement version for cache invalidation
-    #[serde(default)]
+    #[serde(default, alias = "entitlementVersion")]
     pub entitlement_version: Option<u64>,
 }
 
@@ -96,9 +118,9 @@ pub struct CreditDeductResponse {
     /// Whether the deduction was successful
     pub success: bool,
     /// Balance after deduction
-    #[serde(default)]
+    #[serde(default, alias = "balance")]
     pub balance_after: f64,
     /// Transaction ID
-    #[serde(default)]
+    #[serde(default, alias = "transactionId")]
     pub transaction_id: Option<String>,
 }
