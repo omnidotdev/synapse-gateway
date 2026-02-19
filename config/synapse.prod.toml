@@ -123,6 +123,21 @@ type = "openai_tts"
 api_key = "{{ env.OPENAI_API_KEY }}"
 
 # ------------------------------------
+# MCP Tool Servers
+# ------------------------------------
+
+[mcp.servers.brave_search.type]
+transport = "stdio"
+command = "npx"
+args = ["-y", "@anthropic-ai/mcp-server-brave-search"]
+env = { BRAVE_API_KEY = "{{ env.BRAVE_API_KEY }}" }
+
+[mcp.servers.fetch.type]
+transport = "stdio"
+command = "npx"
+args = ["-y", "@anthropic-ai/mcp-server-fetch"]
+
+# ------------------------------------
 # API Key Authentication
 # ------------------------------------
 
