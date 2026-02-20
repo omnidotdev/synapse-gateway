@@ -107,6 +107,7 @@ fn to_chat_request(req: &CompletionRequest) -> ChatRequest {
                             ContentBlock::ToolUse { id, name, input } => {
                                 tool_calls.push(ToolCall {
                                     id: id.clone(),
+                                    tool_type: "function".to_owned(),
                                     function: FunctionCall {
                                         name: name.clone(),
                                         arguments: input.to_string(),

@@ -99,6 +99,7 @@ pub fn from_completion_response(resp: llm::CompletionResponse) -> types::ChatRes
                     tcs.into_iter()
                         .map(|tc| types::ToolCall {
                             id: tc.id,
+                            tool_type: "function".to_owned(),
                             function: types::FunctionCall {
                                 name: tc.function.name,
                                 arguments: tc.function.arguments,

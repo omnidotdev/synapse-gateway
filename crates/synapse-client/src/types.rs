@@ -149,8 +149,15 @@ pub struct Usage {
 pub struct ToolCall {
     /// Unique identifier
     pub id: String,
+    /// Tool type (always "function")
+    #[serde(rename = "type", default = "default_tool_type")]
+    pub tool_type: String,
     /// Function details
     pub function: FunctionCall,
+}
+
+fn default_tool_type() -> String {
+    "function".to_owned()
 }
 
 /// Function name and arguments
