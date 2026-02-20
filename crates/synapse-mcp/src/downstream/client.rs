@@ -5,13 +5,15 @@ use rmcp::model::{CallToolRequestParam, CallToolResult, Tool};
 use rmcp::service::{RoleClient, RunningService, ServiceExt as _};
 use rmcp::transport::TokioChildProcess;
 use synapse_config::{HttpConfig, McpAuthConfig, McpServerType, StdioConfig};
+use tokio::sync::Mutex;
 
 use crate::error::McpError;
 
 /// Connected MCP downstream client wrapping a running rmcp service
 pub struct McpClient {
-    service: RunningService<RoleClient, ()>,
+    service: Mutex<RunningService<RoleClient, ()>>,
     server_name: String,
+    server_config: McpServerType,
 }
 
 impl McpClient {
@@ -26,8 +28,9 @@ impl McpClient {
         tracing::info!(server = name, "connected to MCP server");
 
         Ok(Self {
-            service,
+            service: Mutex::new(service),
             server_name: name.to_string(),
+            server_config: server_type.clone(),
         })
     }
 
@@ -90,24 +93,58 @@ impl McpClient {
     /// List all tools available on this server
     pub async fn list_tools(&self) -> Result<Vec<Tool>, McpError> {
         self.service
+            .lock()
+            .await
             .list_all_tools()
             .await
             .map_err(|e| McpError::Transport(format!("list_tools failed on {}: {e}", self.server_name)))
     }
 
-    /// Call a tool on this server
+    /// Call a tool on this server, reconnecting once on transport failure
     pub async fn call_tool(
         &self,
         name: &str,
         arguments: Option<serde_json::Map<String, serde_json::Value>>,
     ) -> Result<CallToolResult, McpError> {
-        self.service
+        // First attempt — clone arguments so we retain them for the retry
+        let first_result = {
+            let guard = self.service.lock().await;
+            guard
+                .call_tool(CallToolRequestParam {
+                    name: Cow::Owned(name.to_string()),
+                    arguments: arguments.clone(),
+                })
+                .await
+        };
+
+        if let Ok(result) = first_result {
+            return Ok(result);
+        }
+
+        // Transport failure — reconnect and retry once
+        tracing::warn!(server = %self.server_name, "MCP transport failure, reconnecting");
+
+        let new_service = match &self.server_config {
+            McpServerType::Stdio(c) => Self::connect_stdio(c).await?,
+            McpServerType::Sse(c) => Self::connect_sse(c).await?,
+            McpServerType::StreamableHttp(c) => Self::connect_streamable_http(c).await?,
+        };
+
+        let mut guard = self.service.lock().await;
+        *guard = new_service;
+
+        guard
             .call_tool(CallToolRequestParam {
                 name: Cow::Owned(name.to_string()),
                 arguments,
             })
             .await
-            .map_err(|e| McpError::Execution(format!("tool '{}' failed on {}: {e}", name, self.server_name)))
+            .map_err(|e| {
+                McpError::Execution(format!(
+                    "tool '{}' failed on {} after reconnect: {e}",
+                    name, self.server_name
+                ))
+            })
     }
 
     /// Get the server name
@@ -118,6 +155,7 @@ impl McpClient {
     /// Gracefully shut down the connection
     pub async fn shutdown(self) -> Result<(), McpError> {
         self.service
+            .into_inner()
             .cancel()
             .await
             .map_err(|e| McpError::Transport(format!("shutdown failed: {e}")))?;
