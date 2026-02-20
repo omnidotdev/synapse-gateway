@@ -37,7 +37,7 @@ strategy = "threshold"
 
 [llm.routing.threshold]
 low_complexity_model = "openai/gpt-4o-mini"
-high_complexity_model = "anthropic/claude-sonnet-4-20250514"
+high_complexity_model = "anthropic/claude-sonnet-4-5-20250929"
 quality_floor = 0.7
 
 [[llm.routing.models]]
@@ -64,6 +64,30 @@ vision = true
 
 [[llm.routing.models]]
 provider = "anthropic"
+model = "claude-opus-4-6"
+input_per_mtok = 15.00
+output_per_mtok = 75.00
+quality = 0.97
+context_window = 200000
+[llm.routing.models.capabilities]
+tool_calling = true
+vision = true
+long_context = true
+
+[[llm.routing.models]]
+provider = "anthropic"
+model = "claude-sonnet-4-5-20250929"
+input_per_mtok = 3.00
+output_per_mtok = 15.00
+quality = 0.93
+context_window = 200000
+[llm.routing.models.capabilities]
+tool_calling = true
+vision = true
+long_context = true
+
+[[llm.routing.models]]
+provider = "anthropic"
 model = "claude-sonnet-4-20250514"
 input_per_mtok = 3.00
 output_per_mtok = 15.00
@@ -73,6 +97,27 @@ context_window = 200000
 tool_calling = true
 vision = true
 long_context = true
+
+[[llm.routing.models]]
+provider = "anthropic"
+model = "claude-haiku-4-5-20251001"
+input_per_mtok = 0.80
+output_per_mtok = 4.00
+quality = 0.75
+context_window = 200000
+[llm.routing.models.capabilities]
+tool_calling = true
+vision = true
+
+[[llm.routing.models]]
+provider = "openai"
+model = "o3-mini"
+input_per_mtok = 1.10
+output_per_mtok = 4.40
+quality = 0.87
+context_window = 128000
+[llm.routing.models.capabilities]
+tool_calling = true
 
 [[llm.routing.models]]
 provider = "nvidia"
@@ -96,7 +141,7 @@ max_attempts = 2
 
 [[llm.failover.equivalence_groups]]
 name = "frontier"
-models = ["openai/gpt-4o", "anthropic/claude-sonnet-4-20250514", "nvidia/moonshotai/kimi-k2.5"]
+models = ["anthropic/claude-opus-4-6", "anthropic/claude-sonnet-4-5-20250929", "openai/gpt-4o", "anthropic/claude-sonnet-4-20250514", "nvidia/moonshotai/kimi-k2.5"]
 
 [[llm.failover.equivalence_groups]]
 name = "fast"
