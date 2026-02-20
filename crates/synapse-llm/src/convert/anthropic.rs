@@ -468,6 +468,15 @@ pub struct AnthropicStreamState {
     current_tool: Option<(String, String)>,
     /// Whether we've started accumulating tool input JSON
     tool_json_started: bool,
+    /// Sequential 0-based index of the tool call currently being streamed
+    ///
+    /// Anthropic's content block index is shared across all block types (text,
+    /// tool_use, …), so it cannot be used as the tool-call index — a tool use
+    /// that follows a text block would have content_block index 1+, creating
+    /// phantom entries in consumers that index by this value.
+    current_tool_call_index: u32,
+    /// Counter used to assign the next tool call its sequential index
+    next_tool_call_index: u32,
 }
 
 impl AnthropicStreamState {
@@ -487,12 +496,14 @@ impl AnthropicStreamState {
                     AnthropicStreamContentBlock::Text { .. } => Vec::new(),
                     AnthropicStreamContentBlock::ToolUse { id, name, .. } => {
                         self.current_tool = Some((id.clone(), name.clone()));
+                        self.current_tool_call_index = self.next_tool_call_index;
+                        self.next_tool_call_index += 1;
                         self.tool_json_started = false;
                         vec![StreamEvent::Delta(StreamDelta {
                             index: 0,
                             content: None,
                             tool_call: Some(StreamToolCall {
-                                index: *index,
+                                index: self.current_tool_call_index,
                                 id: Some(id.clone()),
                                 function: Some(StreamFunctionCall {
                                     name: Some(name.clone()),
@@ -505,7 +516,7 @@ impl AnthropicStreamState {
                 }
             }
 
-            AnthropicStreamEvent::ContentBlockDelta { index, delta } => match delta {
+            AnthropicStreamEvent::ContentBlockDelta { delta, .. } => match delta {
                 AnthropicStreamDelta::TextDelta { text } => {
                     vec![StreamEvent::Delta(StreamDelta {
                         index: 0,
@@ -520,7 +531,7 @@ impl AnthropicStreamState {
                         index: 0,
                         content: None,
                         tool_call: Some(StreamToolCall {
-                            index: *index,
+                            index: self.current_tool_call_index,
                             id: None,
                             function: Some(StreamFunctionCall {
                                 name: None,
