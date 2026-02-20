@@ -22,6 +22,11 @@ api_key = "{{ env.OPENAI_API_KEY }}"
 type = "anthropic"
 api_key = "{{ env.ANTHROPIC_API_KEY }}"
 
+[llm.providers.nvidia]
+type = "openai"
+base_url = "https://integrate.api.nvidia.com/v1"
+api_key = "{{ env.NVIDIA_API_KEY }}"
+
 # ------------------------------------
 # Intelligent Routing
 # ------------------------------------
@@ -69,6 +74,18 @@ tool_calling = true
 vision = true
 long_context = true
 
+[[llm.routing.models]]
+provider = "nvidia"
+model = "moonshotai/kimi-k2.5"
+input_per_mtok = 0.60
+output_per_mtok = 2.50
+quality = 0.89
+context_window = 262000
+[llm.routing.models.capabilities]
+tool_calling = true
+vision = true
+long_context = true
+
 # ------------------------------------
 # Failover
 # ------------------------------------
@@ -79,7 +96,7 @@ max_attempts = 2
 
 [[llm.failover.equivalence_groups]]
 name = "frontier"
-models = ["openai/gpt-4o", "anthropic/claude-sonnet-4-20250514"]
+models = ["openai/gpt-4o", "anthropic/claude-sonnet-4-20250514", "nvidia/moonshotai/kimi-k2.5"]
 
 [[llm.failover.equivalence_groups]]
 name = "fast"
@@ -167,4 +184,8 @@ margin = 1.2
 
 [billing.managed_providers.anthropic]
 api_key = "{{ env.ANTHROPIC_API_KEY }}"
+margin = 1.15
+
+[billing.managed_providers.nvidia]
+api_key = "{{ env.NVIDIA_API_KEY }}"
 margin = 1.15
