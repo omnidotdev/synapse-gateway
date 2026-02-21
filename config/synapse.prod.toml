@@ -205,7 +205,7 @@ args = ["mcp-server-fetch"]
 
 [auth]
 enabled = true
-api_url = "http://synapse-api.railway.internal:4000"
+api_url = "{{ env.SYNAPSE_API_URL | default("https://api.synapse.omni.dev") }}"
 gateway_secret = "{{ env.GATEWAY_SECRET }}"
 cache_ttl_seconds = 60
 cache_capacity = 10000
