@@ -60,7 +60,7 @@ impl LlmState {
         request: CompletionRequest,
         mut context: RequestContext,
     ) -> Result<CompletionResponse, LlmError> {
-        let (provider_name, model_id, provider) =
+        let (provider_name, model_id, provider, explicit_provider) =
             self.resolve_provider(&request.model, &request).await?;
 
         // Resolve API key based on billing mode
@@ -75,9 +75,16 @@ impl LlmState {
             self.check_credits(&context, cost).await?;
         }
 
-        let response = self
-            .complete_with_failover(&request, &context, &provider_name, &model_id, &provider)
-            .await?;
+        // Skip failover when the user explicitly selected a provider (e.g.
+        // "nvidia/moonshotai/kimi-k2.5") — surface the error instead of
+        // silently routing to a different model
+        let response = if explicit_provider {
+            self.complete_direct(&request, &context, &provider_name, &model_id, &provider)
+                .await?
+        } else {
+            self.complete_with_failover(&request, &context, &provider_name, &model_id, &provider)
+                .await?
+        };
 
         // Record usage for billing
         #[cfg(feature = "billing")]
@@ -125,7 +132,7 @@ impl LlmState {
     ) -> Result<(String, Pin<Box<dyn Stream<Item = Result<StreamEvent, LlmError>> + Send>>), LlmError>
     {
         let original_model = request.model.clone();
-        let (provider_name, model_id, provider) =
+        let (provider_name, model_id, provider, explicit_provider) =
             self.resolve_provider(&request.model, &request).await?;
 
         // Resolve API key based on billing mode
@@ -140,7 +147,19 @@ impl LlmState {
             self.check_credits(&context, cost).await?;
         }
 
-        let (actual_model, stream) = if self.is_cascade_strategy(&original_model) {
+        // Skip failover/cascade when the user explicitly selected a
+        // provider — surface the error instead of silently routing to a
+        // different model
+        let (actual_model, stream) = if explicit_provider {
+            self.complete_stream_direct(
+                &request,
+                &context,
+                &provider_name,
+                &model_id,
+                &provider,
+            )
+            .await?
+        } else if self.is_cascade_strategy(&original_model) {
             self.complete_stream_with_cascade(
                 &request,
                 &context,
@@ -328,10 +347,11 @@ impl LlmState {
         &self,
         model: &str,
         request: &CompletionRequest,
-    ) -> Result<(String, String, Arc<dyn Provider>), LlmError> {
+    ) -> Result<(String, String, Arc<dyn Provider>, bool), LlmError> {
         // Check for virtual routing classes
         if self.inner.routing_config.enabled && ROUTING_CLASSES.contains(&model) {
-            return self.resolve_via_routing(model, request);
+            let (pn, mi, p) = self.resolve_via_routing(model, request)?;
+            return Ok((pn, mi, p, false));
         }
 
         let resolved = self.inner.router.resolve(model).await?;
@@ -342,7 +362,7 @@ impl LlmState {
             .ok_or_else(|| LlmError::ProviderNotFound {
                 provider: resolved.provider_name.clone(),
             })?;
-        Ok((resolved.provider_name.clone(), resolved.model_id, Arc::clone(provider)))
+        Ok((resolved.provider_name.clone(), resolved.model_id, Arc::clone(provider), resolved.explicit_provider))
     }
 
     /// Resolve a virtual model name via the smart routing system
@@ -445,6 +465,105 @@ impl LlmState {
         }
 
         config
+    }
+
+    /// Execute a non-streaming completion without failover
+    ///
+    /// Used when the user explicitly selected a provider/model — errors
+    /// surface directly instead of silently routing to a different model
+    pub(crate) async fn complete_direct(
+        &self,
+        request: &CompletionRequest,
+        context: &RequestContext,
+        provider_name: &str,
+        model_id: &str,
+        provider: &Arc<dyn Provider>,
+    ) -> Result<CompletionResponse, LlmError> {
+        let mut req = request.clone();
+        model_id.clone_into(&mut req.model);
+
+        let start = Instant::now();
+        match provider.complete(&req, context).await {
+            Ok(response) => {
+                self.inner.health.record_success(provider_name);
+                self.inner.feedback.record(&RequestFeedback {
+                    provider: provider_name.to_owned(),
+                    model: model_id.to_owned(),
+                    latency: start.elapsed(),
+                    success: true,
+                    input_tokens: response.usage.as_ref().map(|u| u.prompt_tokens),
+                    output_tokens: response.usage.as_ref().map(|u| u.completion_tokens),
+                });
+                Ok(response)
+            }
+            Err(e) => {
+                self.inner.health.record_failure(provider_name);
+                self.inner.feedback.record(&RequestFeedback {
+                    provider: provider_name.to_owned(),
+                    model: model_id.to_owned(),
+                    latency: start.elapsed(),
+                    success: false,
+                    input_tokens: None,
+                    output_tokens: None,
+                });
+                tracing::warn!(
+                    provider = provider_name,
+                    model = model_id,
+                    error = %e,
+                    "explicit provider failed, not failing over"
+                );
+                Err(e)
+            }
+        }
+    }
+
+    /// Execute a streaming completion without failover
+    ///
+    /// Used when the user explicitly selected a provider/model
+    pub(crate) async fn complete_stream_direct(
+        &self,
+        request: &CompletionRequest,
+        context: &RequestContext,
+        provider_name: &str,
+        model_id: &str,
+        provider: &Arc<dyn Provider>,
+    ) -> Result<(String, Pin<Box<dyn Stream<Item = Result<StreamEvent, LlmError>> + Send>>), LlmError> {
+        let mut req = request.clone();
+        model_id.clone_into(&mut req.model);
+
+        let start = Instant::now();
+        match provider.complete_stream(&req, context).await {
+            Ok(stream) => {
+                self.inner.health.record_success(provider_name);
+                self.inner.feedback.record(&RequestFeedback {
+                    provider: provider_name.to_owned(),
+                    model: model_id.to_owned(),
+                    latency: start.elapsed(),
+                    success: true,
+                    input_tokens: None,
+                    output_tokens: None,
+                });
+                Ok((model_id.to_owned(), stream))
+            }
+            Err(e) => {
+                self.inner.health.record_failure(provider_name);
+                self.inner.feedback.record(&RequestFeedback {
+                    provider: provider_name.to_owned(),
+                    model: model_id.to_owned(),
+                    latency: start.elapsed(),
+                    success: false,
+                    input_tokens: None,
+                    output_tokens: None,
+                });
+                tracing::warn!(
+                    provider = provider_name,
+                    model = model_id,
+                    error = %e,
+                    "explicit provider streaming failed, not failing over"
+                );
+                Err(e)
+            }
+        }
     }
 
     /// Execute a non-streaming completion with failover support
