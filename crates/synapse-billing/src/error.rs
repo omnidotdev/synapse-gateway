@@ -31,4 +31,8 @@ pub enum BillingError {
         /// Meter key that exceeded its limit
         meter_key: String,
     },
+
+    /// Circuit breaker is open due to repeated failures
+    #[error("billing service circuit open")]
+    CircuitOpen,
 }

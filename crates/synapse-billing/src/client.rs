@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use secrecy::{ExposeSecret, SecretString};
 use url::Url;
 
+use crate::circuit::CircuitBreaker;
 use crate::error::BillingError;
 use crate::types::{
     CheckUsageResponse, CreditCheckResponse, CreditDeductRequest, CreditDeductResponse,
@@ -16,6 +18,7 @@ pub struct AetherClient {
     base_url: Url,
     app_id: String,
     service_api_key: SecretString,
+    circuit: CircuitBreaker,
 }
 
 impl AetherClient {
@@ -26,6 +29,8 @@ impl AetherClient {
     /// Returns an error if the HTTP client cannot be built
     pub fn new(base_url: Url, app_id: String, service_api_key: SecretString) -> Result<Self, BillingError> {
         let http = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(3))
+            .timeout(Duration::from_secs(5))
             .build()
             .map_err(BillingError::Request)?;
 
@@ -34,6 +39,7 @@ impl AetherClient {
             base_url,
             app_id,
             service_api_key,
+            circuit: CircuitBreaker::new(),
         })
     }
 
@@ -64,26 +70,37 @@ impl AetherClient {
                 message: format!("invalid URL: {e}"),
             })?;
 
+        self.circuit.check()?;
+
         let body = RecordUsageRequest {
             delta,
             idempotency_key: idempotency_key.to_owned(),
             metadata,
         };
 
-        let response = self
+        let result = self
             .http
             .post(url)
             .header("x-service-api-key", self.service_api_key.expose_secret())
             .json(&body)
             .send()
-            .await?;
+            .await;
 
-        if response.status().is_success() {
-            Ok(response.json().await?)
-        } else {
-            let status = response.status().as_u16();
-            let message = response.text().await.unwrap_or_default();
-            Err(BillingError::Api { status, message })
+        match result {
+            Ok(response) if response.status().is_success() => {
+                self.circuit.record_success();
+                Ok(response.json().await?)
+            }
+            Ok(response) => {
+                self.circuit.record_failure();
+                let status = response.status().as_u16();
+                let message = response.text().await.unwrap_or_default();
+                Err(BillingError::Api { status, message })
+            }
+            Err(e) => {
+                self.circuit.record_failure();
+                Err(BillingError::Request(e))
+            }
         }
     }
 
@@ -112,20 +129,31 @@ impl AetherClient {
                 message: format!("invalid URL: {e}"),
             })?;
 
-        let response = self
+        self.circuit.check()?;
+
+        let result = self
             .http
             .get(url)
             .header("x-service-api-key", self.service_api_key.expose_secret())
             .query(&[("additionalUsage", additional_usage.to_string())])
             .send()
-            .await?;
+            .await;
 
-        if response.status().is_success() {
-            Ok(response.json().await?)
-        } else {
-            let status = response.status().as_u16();
-            let message = response.text().await.unwrap_or_default();
-            Err(BillingError::Api { status, message })
+        match result {
+            Ok(response) if response.status().is_success() => {
+                self.circuit.record_success();
+                Ok(response.json().await?)
+            }
+            Ok(response) => {
+                self.circuit.record_failure();
+                let status = response.status().as_u16();
+                let message = response.text().await.unwrap_or_default();
+                Err(BillingError::Api { status, message })
+            }
+            Err(e) => {
+                self.circuit.record_failure();
+                Err(BillingError::Request(e))
+            }
         }
     }
 
@@ -153,19 +181,30 @@ impl AetherClient {
                 message: format!("invalid URL: {e}"),
             })?;
 
-        let response = self
+        self.circuit.check()?;
+
+        let result = self
             .http
             .get(url)
             .header("x-service-api-key", self.service_api_key.expose_secret())
             .send()
-            .await?;
+            .await;
 
-        if response.status().is_success() {
-            Ok(response.json().await?)
-        } else {
-            let status = response.status().as_u16();
-            let message = response.text().await.unwrap_or_default();
-            Err(BillingError::Api { status, message })
+        match result {
+            Ok(response) if response.status().is_success() => {
+                self.circuit.record_success();
+                Ok(response.json().await?)
+            }
+            Ok(response) => {
+                self.circuit.record_failure();
+                let status = response.status().as_u16();
+                let message = response.text().await.unwrap_or_default();
+                Err(BillingError::Api { status, message })
+            }
+            Err(e) => {
+                self.circuit.record_failure();
+                Err(BillingError::Request(e))
+            }
         }
     }
 
@@ -192,19 +231,30 @@ impl AetherClient {
                 message: format!("invalid URL: {e}"),
             })?;
 
-        let response = self
+        self.circuit.check()?;
+
+        let result = self
             .http
             .get(url)
             .header("x-service-api-key", self.service_api_key.expose_secret())
             .send()
-            .await?;
+            .await;
 
-        if response.status().is_success() {
-            Ok(response.json().await?)
-        } else {
-            let status = response.status().as_u16();
-            let message = response.text().await.unwrap_or_default();
-            Err(BillingError::Api { status, message })
+        match result {
+            Ok(response) if response.status().is_success() => {
+                self.circuit.record_success();
+                Ok(response.json().await?)
+            }
+            Ok(response) => {
+                self.circuit.record_failure();
+                let status = response.status().as_u16();
+                let message = response.text().await.unwrap_or_default();
+                Err(BillingError::Api { status, message })
+            }
+            Err(e) => {
+                self.circuit.record_failure();
+                Err(BillingError::Request(e))
+            }
         }
     }
 
@@ -232,20 +282,31 @@ impl AetherClient {
                 message: format!("invalid URL: {e}"),
             })?;
 
-        let response = self
+        self.circuit.check()?;
+
+        let result = self
             .http
             .get(url)
             .header("x-service-api-key", self.service_api_key.expose_secret())
             .query(&[("amount", amount.to_string())])
             .send()
-            .await?;
+            .await;
 
-        if response.status().is_success() {
-            Ok(response.json().await?)
-        } else {
-            let status = response.status().as_u16();
-            let message = response.text().await.unwrap_or_default();
-            Err(BillingError::Api { status, message })
+        match result {
+            Ok(response) if response.status().is_success() => {
+                self.circuit.record_success();
+                Ok(response.json().await?)
+            }
+            Ok(response) => {
+                self.circuit.record_failure();
+                let status = response.status().as_u16();
+                let message = response.text().await.unwrap_or_default();
+                Err(BillingError::Api { status, message })
+            }
+            Err(e) => {
+                self.circuit.record_failure();
+                Err(BillingError::Request(e))
+            }
         }
     }
 
@@ -273,20 +334,31 @@ impl AetherClient {
                 message: format!("invalid URL: {e}"),
             })?;
 
-        let response = self
+        self.circuit.check()?;
+
+        let result = self
             .http
             .post(url)
             .header("x-service-api-key", self.service_api_key.expose_secret())
             .json(request)
             .send()
-            .await?;
+            .await;
 
-        if response.status().is_success() {
-            Ok(response.json().await?)
-        } else {
-            let status = response.status().as_u16();
-            let message = response.text().await.unwrap_or_default();
-            Err(BillingError::Api { status, message })
+        match result {
+            Ok(response) if response.status().is_success() => {
+                self.circuit.record_success();
+                Ok(response.json().await?)
+            }
+            Ok(response) => {
+                self.circuit.record_failure();
+                let status = response.status().as_u16();
+                let message = response.text().await.unwrap_or_default();
+                Err(BillingError::Api { status, message })
+            }
+            Err(e) => {
+                self.circuit.record_failure();
+                Err(BillingError::Request(e))
+            }
         }
     }
 

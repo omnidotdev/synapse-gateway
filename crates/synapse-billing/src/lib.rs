@@ -1,5 +1,6 @@
 #![allow(clippy::missing_errors_doc, clippy::must_use_candidate)]
 
+mod circuit;
 pub mod client;
 pub mod error;
 pub mod recorder;
