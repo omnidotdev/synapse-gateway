@@ -185,28 +185,28 @@ impl Provider for OpenAiProvider {
         let byte_stream = response.bytes_stream();
         let event_stream = byte_stream.eventsource();
 
-        let mapped = event_stream.filter_map(|result| async move {
-            match result {
+        let mapped = event_stream
+            .map(|result| match result {
                 Ok(event) => {
                     let data = event.data.trim().to_owned();
                     if data == "[DONE]" {
-                        return Some(Ok(StreamEvent::Done));
+                        return vec![Ok(StreamEvent::Done)];
                     }
 
                     match serde_json::from_str::<OpenAiStreamChunk>(&data) {
-                        Ok(chunk) => {
-                            let events = openai_chunk_to_events(&chunk);
-                            events.into_iter().next().map(Ok)
-                        }
+                        Ok(chunk) => openai_chunk_to_events(&chunk)
+                            .into_iter()
+                            .map(Ok)
+                            .collect(),
                         Err(e) => {
                             tracing::debug!(error = %e, data = %data, "skipping unparseable SSE chunk");
-                            None
+                            vec![]
                         }
                     }
                 }
-                Err(e) => Some(Err(LlmError::Streaming(e.to_string()))),
-            }
-        });
+                Err(e) => vec![Err(LlmError::Streaming(e.to_string()))],
+            })
+            .flat_map(futures_util::stream::iter);
 
         Ok(Box::pin(mapped))
     }

@@ -630,53 +630,59 @@ where
         .flat_map(stream::iter);
 
     // Parse each SSE data line into ChatEvents
-    line_stream.filter_map(|result| async move {
-        match result {
-            Err(e) => Some(Err(e)),
+    line_stream
+        .map(|result| match result {
+            Err(e) => vec![Err(e)],
             Ok(data) => {
                 if data == "[DONE]" {
-                    return Some(Ok(ChatEvent::Done {
+                    return vec![Ok(ChatEvent::Done {
                         finish_reason: None,
                         usage: None,
-                    }));
+                    })];
                 }
 
                 match serde_json::from_str::<StreamChunk>(&data) {
-                    Ok(chunk) => chunk_to_event(chunk),
-                    Err(e) => Some(Err(SynapseClientError::Parse(format!(
+                    Ok(chunk) => chunk_to_events(chunk),
+                    Err(e) => vec![Err(SynapseClientError::Parse(format!(
                         "failed to parse stream chunk: {e}"
-                    )))),
+                    )))],
                 }
             }
-        }
-    })
+        })
+        .flat_map(stream::iter)
 }
 
-/// Convert a parsed stream chunk into a `ChatEvent`
-fn chunk_to_event(chunk: StreamChunk) -> Option<Result<ChatEvent>> {
-    let choice = chunk.choices.into_iter().next()?;
+/// Convert a parsed stream chunk into `ChatEvent`s
+///
+/// A single chunk can produce multiple events (e.g. content + finish in the
+/// same SSE frame, which models like Kimi K2.5 do via thinking mode).
+fn chunk_to_events(chunk: StreamChunk) -> Vec<Result<ChatEvent>> {
+    let Some(choice) = chunk.choices.into_iter().next() else {
+        return vec![];
+    };
 
-    // Check for finish
-    if let Some(reason) = choice.finish_reason {
-        return Some(Ok(ChatEvent::Done {
-            finish_reason: Some(reason),
-            usage: chunk.usage,
-        }));
+    let mut events = Vec::new();
+
+    // Emit content delta first so it is not lost when finish_reason is
+    // present in the same chunk (Kimi K2.5 thinking mode sends the entire
+    // answer alongside `finish_reason: "stop"` in the final frame)
+    if let Some(content) = choice.delta.content {
+        events.push(Ok(ChatEvent::ContentDelta(content)));
     }
 
-    // Check for tool calls
+    // Tool calls
     if let Some(tool_calls) = choice.delta.tool_calls {
         for tc in tool_calls {
             if let Some(ref func) = tc.function {
                 if let (Some(id), Some(name)) = (&tc.id, &func.name) {
-                    return Some(Ok(ChatEvent::ToolCallStart {
+                    events.push(Ok(ChatEvent::ToolCallStart {
                         index: tc.index,
                         id: id.clone(),
                         name: name.clone(),
                     }));
                 }
                 if let Some(ref args) = func.arguments {
-                    return Some(Ok(ChatEvent::ToolCallDelta {
+                    events.push(Ok(ChatEvent::ToolCallDelta {
                         index: tc.index,
                         arguments: args.clone(),
                     }));
@@ -685,10 +691,13 @@ fn chunk_to_event(chunk: StreamChunk) -> Option<Result<ChatEvent>> {
         }
     }
 
-    // Text content
-    if let Some(content) = choice.delta.content {
-        return Some(Ok(ChatEvent::ContentDelta(content)));
+    // Finish (must come after content/tool events)
+    if let Some(reason) = choice.finish_reason {
+        events.push(Ok(ChatEvent::Done {
+            finish_reason: Some(reason),
+            usage: chunk.usage,
+        }));
     }
 
-    None
+    events
 }
