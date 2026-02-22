@@ -21,6 +21,14 @@ use crate::types::{CompletionRequest, CompletionResponse, StreamEvent};
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 
 /// OpenAI-compatible provider
+/// Whether the provider is the canonical OpenAI API (vs a compatible third-party)
+fn is_canonical_openai(base_url: &Url) -> bool {
+    base_url
+        .host_str()
+        .is_some_and(|h| h == "api.openai.com")
+}
+
+/// OpenAI-compatible provider
 pub struct OpenAiProvider {
     name: String,
     client: Client,
@@ -141,7 +149,14 @@ impl Provider for OpenAiProvider {
     ) -> Result<Pin<Box<dyn Stream<Item = Result<StreamEvent, LlmError>> + Send>>, LlmError> {
         let mut wire_request: OpenAiRequest = request.into();
         wire_request.stream = Some(true);
-        wire_request.stream_options = Some(crate::protocol::openai::OpenAiStreamOptions { include_usage: true });
+
+        // Only send stream_options to canonical OpenAI — many compatible
+        // APIs (NVIDIA NIM, etc.) reject the unsupported parameter
+        wire_request.stream_options = if is_canonical_openai(&self.base_url) {
+            Some(crate::protocol::openai::OpenAiStreamOptions { include_usage: true })
+        } else {
+            None
+        };
 
         let api_key = self.resolve_api_key(context);
         let extra_headers = apply_header_rules(context.headers(), &self.header_rules);
