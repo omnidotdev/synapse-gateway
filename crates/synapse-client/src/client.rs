@@ -1,6 +1,8 @@
 use std::fmt;
 use std::pin::Pin;
 #[cfg(feature = "embedded")]
+use std::sync::Arc;
+#[cfg(feature = "embedded")]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
@@ -28,6 +30,8 @@ enum Backend {
     #[cfg(feature = "embedded")]
     Embedded {
         state: synapse_llm::LlmState,
+        stt_server: Option<Arc<stt::Server>>,
+        tts_server: Option<Arc<tts::Server>>,
     },
 }
 
@@ -44,8 +48,14 @@ impl Clone for Backend {
                 api_key: api_key.clone(),
             },
             #[cfg(feature = "embedded")]
-            Self::Embedded { state } => Self::Embedded {
+            Self::Embedded {
+                state,
+                stt_server,
+                tts_server,
+            } => Self::Embedded {
                 state: state.clone(),
+                stt_server: stt_server.clone(),
+                tts_server: tts_server.clone(),
             },
         }
     }
@@ -148,7 +158,7 @@ impl SynapseClient {
                 handle_error(response).await?.json().await.map_err(Into::into)
             }
             #[cfg(feature = "embedded")]
-            Backend::Embedded { state } => {
+            Backend::Embedded { state, .. } => {
                 let internal_req = crate::embedded::to_completion_request(req);
                 let context = synapse_core::RequestContext::empty();
                 let response = state
@@ -195,7 +205,7 @@ impl SynapseClient {
                 Ok(Box::pin(event_stream))
             }
             #[cfg(feature = "embedded")]
-            Backend::Embedded { state } => {
+            Backend::Embedded { state, .. } => {
                 let internal_req = crate::embedded::to_completion_request(req);
                 let context = synapse_core::RequestContext::empty();
                 let (_, stream) = state
@@ -229,7 +239,7 @@ impl SynapseClient {
                 Ok(list.data)
             }
             #[cfg(feature = "embedded")]
-            Backend::Embedded { state } => {
+            Backend::Embedded { state, .. } => {
                 let models = state.list_models().await;
                 let now = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -292,9 +302,37 @@ impl SynapseClient {
                     .map_err(Into::into)
             }
             #[cfg(feature = "embedded")]
-            Backend::Embedded { .. } => Err(SynapseClientError::Config(
-                "feature not available in embedded mode".to_owned(),
-            )),
+            Backend::Embedded { stt_server, .. } => {
+                let server = stt_server.as_ref().ok_or(SynapseClientError::Config(
+                    "no STT provider configured".to_owned(),
+                ))?;
+
+                let req = stt::TranscriptionRequest {
+                    audio: audio.to_vec(),
+                    filename: filename.to_owned(),
+                    content_type: "audio/wav".to_owned(),
+                    model: model.to_owned(),
+                    language: None,
+                    prompt: None,
+                    response_format: None,
+                    temperature: None,
+                };
+
+                let (parts, _) = http::Request::new(()).into_parts();
+                let ctx = stt::RequestContext {
+                    parts,
+                    api_key: None,
+                    client_identity: None,
+                    authentication: synapse_core::Authentication::default(),
+                };
+
+                let resp = server
+                    .transcribe(req, &ctx)
+                    .await
+                    .map_err(|e| SynapseClientError::Config(format!("STT: {e}")))?;
+
+                Ok(Transcription { text: resp.text })
+            }
         }
     }
 
@@ -324,9 +362,34 @@ impl SynapseClient {
                 Ok(handle_error(response).await?.bytes().await?)
             }
             #[cfg(feature = "embedded")]
-            Backend::Embedded { .. } => Err(SynapseClientError::Config(
-                "feature not available in embedded mode".to_owned(),
-            )),
+            Backend::Embedded { tts_server, .. } => {
+                let server = tts_server.as_ref().ok_or(SynapseClientError::Config(
+                    "no TTS provider configured".to_owned(),
+                ))?;
+
+                let tts_req = tts::SpeechRequest {
+                    model: req.model.clone(),
+                    input: req.input.clone(),
+                    voice: req.voice.clone(),
+                    response_format: req.response_format.clone(),
+                    speed: req.speed,
+                };
+
+                let (parts, _) = http::Request::new(()).into_parts();
+                let ctx = tts::RequestContext {
+                    parts,
+                    api_key: None,
+                    client_identity: None,
+                    authentication: synapse_core::Authentication::default(),
+                };
+
+                let resp = server
+                    .synthesize(tts_req, &ctx)
+                    .await
+                    .map_err(|e| SynapseClientError::Config(format!("TTS: {e}")))?;
+
+                Ok(Bytes::from(resp.audio))
+            }
         }
     }
 
@@ -518,18 +581,36 @@ impl SynapseClient {
 impl SynapseClient {
     /// Create a client using synapse-llm in-process (no HTTP server needed)
     ///
+    /// STT/TTS initialization failures are soft — the client will still work
+    /// for LLM chat, but `transcribe()`/`synthesize()` will return errors.
+    ///
     /// # Errors
     ///
     /// Returns an error if the LLM providers fail to initialize
-    pub async fn embedded(config: synapse_config::LlmConfig) -> Result<Self> {
-        let state = synapse_llm::LlmState::from_config(config)
+    pub async fn embedded(config: synapse_config::Config) -> Result<Self> {
+        // Build STT/TTS servers before moving config.llm
+        let stt_server = stt::SttServerBuilder::new(&config)
+            .build()
+            .ok()
+            .map(Arc::new);
+
+        let tts_server = tts::TtsServerBuilder::new(&config)
+            .build()
+            .ok()
+            .map(Arc::new);
+
+        let state = synapse_llm::LlmState::from_config(config.llm)
             .await
             .map_err(|e| {
                 SynapseClientError::Config(format!("failed to initialize LLM state: {e}"))
             })?;
 
         Ok(Self {
-            backend: Backend::Embedded { state },
+            backend: Backend::Embedded {
+                state,
+                stt_server,
+                tts_server,
+            },
         })
     }
 }

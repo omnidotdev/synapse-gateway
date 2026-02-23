@@ -11,7 +11,7 @@ description = "Typed Rust HTTP client for the Synapse AI router"
 [features]
 default = []
 agent-core = ["dep:agent-core", "dep:async-trait"]
-embedded = ["dep:synapse-llm", "dep:synapse-config", "dep:synapse-core"]
+embedded = ["dep:synapse-llm", "dep:synapse-config", "dep:synapse-core", "dep:stt", "dep:tts", "dep:http"]
 
 [dependencies]
 anyhow.workspace = true
@@ -32,6 +32,9 @@ async-trait = { workspace = true, optional = true }
 synapse-llm = { workspace = true, optional = true }
 synapse-config = { workspace = true, optional = true }
 synapse-core = { workspace = true, optional = true }
+stt = { workspace = true, optional = true }
+tts = { workspace = true, optional = true }
+http = { workspace = true, optional = true }
 
 [lints]
 workspace = true

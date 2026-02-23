@@ -4277,14 +4277,17 @@ dependencies = [
  "async-trait",
  "bytes",
  "futures",
+ "http 1.3.1",
  "reqwest 0.12.23",
  "serde",
  "serde_json",
+ "stt",
  "synapse-config",
  "synapse-core",
  "synapse-llm",
  "thiserror 2.0.16",
  "tokio",
+ "tts",
  "url",
 ]
 
