@@ -710,26 +710,40 @@ where
         })
         .flat_map(stream::iter);
 
-    // Parse each SSE data line into ChatEvents
+    // Parse each SSE data line into ChatEvents.
+    // Usage may arrive in a separate chunk before the finish chunk, so
+    // accumulate it and attach to the final Done event.
     line_stream
-        .map(|result| match result {
-            Err(e) => vec![Err(e)],
-            Ok(data) => {
-                if data == "[DONE]" {
-                    return vec![Ok(ChatEvent::Done {
-                        finish_reason: None,
-                        usage: None,
-                    })];
-                }
+        .scan(
+            None::<crate::types::Usage>,
+            |accumulated_usage, result| {
+                let events = match result {
+                    Err(e) => vec![Err(e)],
+                    Ok(data) => {
+                        if data == "[DONE]" {
+                            return std::future::ready(Some(vec![Ok(ChatEvent::Done {
+                                finish_reason: None,
+                                usage: accumulated_usage.take(),
+                            })]));
+                        }
 
-                match serde_json::from_str::<StreamChunk>(&data) {
-                    Ok(chunk) => chunk_to_events(chunk),
-                    Err(e) => vec![Err(SynapseClientError::Parse(format!(
-                        "failed to parse stream chunk: {e}"
-                    )))],
-                }
-            }
-        })
+                        match serde_json::from_str::<StreamChunk>(&data) {
+                            Ok(chunk) => {
+                                // Store usage from any chunk (including usage-only chunks)
+                                if let Some(ref usage) = chunk.usage {
+                                    *accumulated_usage = Some(usage.clone());
+                                }
+                                chunk_to_events(chunk, accumulated_usage)
+                            }
+                            Err(e) => vec![Err(SynapseClientError::Parse(format!(
+                                "failed to parse stream chunk: {e}"
+                            )))],
+                        }
+                    }
+                };
+                std::future::ready(Some(events))
+            },
+        )
         .flat_map(stream::iter)
 }
 
@@ -737,8 +751,16 @@ where
 ///
 /// A single chunk can produce multiple events (e.g. content + finish in the
 /// same SSE frame, which models like Kimi K2.5 do via thinking mode).
-fn chunk_to_events(chunk: StreamChunk) -> Vec<Result<ChatEvent>> {
+///
+/// `accumulated_usage` is consumed when a `Done` event is emitted, attaching
+/// the usage data that may have arrived in an earlier chunk.
+fn chunk_to_events(
+    chunk: StreamChunk,
+    accumulated_usage: &mut Option<crate::types::Usage>,
+) -> Vec<Result<ChatEvent>> {
     let Some(choice) = chunk.choices.into_iter().next() else {
+        // Usage-only chunks have no choices — usage is already stored by the
+        // caller, so there is nothing to emit here.
         return vec![];
     };
 
@@ -772,11 +794,14 @@ fn chunk_to_events(chunk: StreamChunk) -> Vec<Result<ChatEvent>> {
         }
     }
 
-    // Finish (must come after content/tool events)
+    // Finish (must come after content/tool events).
+    // Prefer usage from this chunk, fall back to accumulated usage from
+    // an earlier usage-only chunk.
     if let Some(reason) = choice.finish_reason {
+        let usage = chunk.usage.or_else(|| accumulated_usage.take());
         events.push(Ok(ChatEvent::Done {
             finish_reason: Some(reason),
-            usage: chunk.usage,
+            usage,
         }));
     }
 
