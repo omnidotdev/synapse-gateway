@@ -6,6 +6,7 @@ license.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 repository.workspace = true
+description = "Billing client for Synapse and Aether usage recording"
 
 [dependencies]
 reqwest = { workspace = true, features = ["json"] }
