@@ -10,6 +10,25 @@ listen_address = "0.0.0.0:3000"
 enabled = true
 path = "/health"
 
+[server.rate_limit]
+[server.rate_limit.storage]
+type = "memory"
+
+[server.rate_limit.global]
+requests = 1000
+window = "1m"
+
+[server.rate_limit.per_ip]
+requests = 120
+window = "1m"
+
+[server.cors]
+origins = ["https://dashboard.synapse.omni.dev"]
+methods = ["GET", "POST", "OPTIONS"]
+headers = ["Content-Type", "Authorization", "X-Api-Key"]
+credentials = true
+max_age = 3600
+
 # ------------------------------------
 # LLM Providers
 # ------------------------------------
@@ -234,3 +253,19 @@ margin = 1.15
 [billing.managed_providers.nvidia]
 api_key = "{{ env.NVIDIA_API_KEY }}"
 margin = 1.15
+
+# ------------------------------------
+# Telemetry
+# ------------------------------------
+
+[telemetry]
+service_name = "synapse-gateway"
+
+[telemetry.exporter]
+endpoint = "{{ env.OTEL_ENDPOINT | default(\"http://otel-collector:4317\") }}"
+protocol = "grpc"
+
+[telemetry.tracing]
+sampling_rate = 0.1
+parent_based = true
+propagation = ["trace_context"]
