@@ -39,6 +39,18 @@ pub struct BillingConfig {
     /// Feature key for API access entitlement
     #[serde(default = "default_api_access_feature_key")]
     pub api_access_feature_key: String,
+    /// Feature key for speech-to-text entitlement
+    #[serde(default = "default_stt_feature_key")]
+    pub stt_feature_key: String,
+    /// Feature key for text-to-speech entitlement
+    #[serde(default = "default_tts_feature_key")]
+    pub tts_feature_key: String,
+    /// Feature key for embeddings entitlement
+    #[serde(default = "default_embeddings_feature_key")]
+    pub embeddings_feature_key: String,
+    /// Feature key for image generation entitlement
+    #[serde(default = "default_image_gen_feature_key")]
+    pub image_gen_feature_key: String,
 }
 
 /// Operating mode for API key resolution
@@ -113,6 +125,22 @@ fn default_api_access_feature_key() -> String {
     "api_access".to_owned()
 }
 
+fn default_stt_feature_key() -> String {
+    "stt_enabled".to_owned()
+}
+
+fn default_tts_feature_key() -> String {
+    "tts_enabled".to_owned()
+}
+
+fn default_embeddings_feature_key() -> String {
+    "embeddings_enabled".to_owned()
+}
+
+fn default_image_gen_feature_key() -> String {
+    "image_gen_enabled".to_owned()
+}
+
 const fn default_margin() -> f64 {
     1.0
 }
@@ -141,6 +169,29 @@ impl BillingConfig {
             return Err("managed mode requires at least one managed provider".to_owned());
         }
         Ok(())
+    }
+
+    /// Return the modality feature key for a given request path, if the
+    /// route requires a modality entitlement
+    pub fn modality_feature_key(&self, path: &str) -> Option<&str> {
+        match path {
+            "/v1/audio/transcriptions" => Some(&self.stt_feature_key),
+            "/v1/audio/speech" => Some(&self.tts_feature_key),
+            "/v1/embeddings" => Some(&self.embeddings_feature_key),
+            "/v1/images/generations" => Some(&self.image_gen_feature_key),
+            _ => None,
+        }
+    }
+}
+
+/// Return a user-facing display name for a modality feature key
+pub fn modality_display_name(feature_key: &str) -> &str {
+    match feature_key {
+        "stt_enabled" => "Speech-to-text",
+        "tts_enabled" => "Text-to-speech",
+        "embeddings_enabled" => "Embeddings",
+        "image_gen_enabled" => "Image generation",
+        _ => "This feature",
     }
 }
 
@@ -245,5 +296,63 @@ mod tests {
         assert_eq!(keys.input_tokens, "input_tokens");
         assert_eq!(keys.output_tokens, "output_tokens");
         assert_eq!(keys.requests, "requests");
+    }
+
+    #[test]
+    fn default_modality_feature_keys() {
+        let toml = r#"
+            enabled = true
+            aether_url = "https://aether.omni.dev/"
+            service_api_key = "sk-test-123"
+            app_id = "synapse"
+        "#;
+
+        let config: BillingConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.stt_feature_key, "stt_enabled");
+        assert_eq!(config.tts_feature_key, "tts_enabled");
+        assert_eq!(config.embeddings_feature_key, "embeddings_enabled");
+        assert_eq!(config.image_gen_feature_key, "image_gen_enabled");
+    }
+
+    #[test]
+    fn modality_feature_key_mapping() {
+        let toml = r#"
+            enabled = true
+            aether_url = "https://aether.omni.dev/"
+            service_api_key = "sk-test-123"
+            app_id = "synapse"
+        "#;
+
+        let config: BillingConfig = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.modality_feature_key("/v1/audio/transcriptions"),
+            Some("stt_enabled")
+        );
+        assert_eq!(
+            config.modality_feature_key("/v1/audio/speech"),
+            Some("tts_enabled")
+        );
+        assert_eq!(
+            config.modality_feature_key("/v1/embeddings"),
+            Some("embeddings_enabled")
+        );
+        assert_eq!(
+            config.modality_feature_key("/v1/images/generations"),
+            Some("image_gen_enabled")
+        );
+        assert_eq!(config.modality_feature_key("/v1/chat/completions"), None);
+        assert_eq!(config.modality_feature_key("/health"), None);
+    }
+
+    #[test]
+    fn modality_display_names() {
+        assert_eq!(modality_display_name("stt_enabled"), "Speech-to-text");
+        assert_eq!(modality_display_name("tts_enabled"), "Text-to-speech");
+        assert_eq!(modality_display_name("embeddings_enabled"), "Embeddings");
+        assert_eq!(
+            modality_display_name("image_gen_enabled"),
+            "Image generation"
+        );
+        assert_eq!(modality_display_name("unknown_key"), "This feature");
     }
 }

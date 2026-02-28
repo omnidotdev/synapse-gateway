@@ -5,7 +5,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use http::StatusCode;
 use synapse_billing::AetherClient;
-use synapse_config::{BillingConfig, FailMode};
+use synapse_config::{modality_display_name, BillingConfig, FailMode};
 use synapse_core::BillingIdentity;
 
 use crate::entitlement_cache::{CachedEntitlement, CachedUsageCheck, EntitlementCache};
@@ -39,8 +39,10 @@ impl EntitlementState {
 /// Middleware that enforces entitlements and usage limits before processing
 ///
 /// 1. Checks `api_access` entitlement → 403 if denied
-/// 2. Checks usage limit for `requests` meter → 429 if exceeded
-/// 3. Passes through if all checks pass
+/// 2. Checks modality entitlement if the route requires one → 403 if denied
+/// 3. Checks usage limit for `requests` meter → 429 if exceeded
+/// 4. Checks usage limit for `input_tokens` meter → 429 if exceeded
+/// 5. Checks usage limit for `output_tokens` meter → 429 if exceeded
 pub async fn entitlement_middleware(state: EntitlementState, request: Request, next: Next) -> Response {
     let Some(identity) = request.extensions().get::<BillingIdentity>() else {
         // No billing identity — request is unauthenticated or on a public path;
@@ -50,9 +52,10 @@ pub async fn entitlement_middleware(state: EntitlementState, request: Request, n
 
     let entity_type = &identity.entity_type;
     let entity_id = &identity.entity_id;
+    let path = request.uri().path().to_owned();
 
     // 1. Check api_access entitlement
-    match check_entitlement(&state, entity_type, entity_id).await {
+    match check_entitlement(&state, entity_type, entity_id, &state.config.api_access_feature_key).await {
         Ok(true) => {}
         Ok(false) => {
             return (StatusCode::FORBIDDEN, "API access not granted for this account").into_response();
@@ -62,11 +65,50 @@ pub async fn entitlement_middleware(state: EntitlementState, request: Request, n
         }
     }
 
-    // 2. Check usage limit
-    match check_usage(&state, entity_type, entity_id).await {
+    // 2. Check modality entitlement if the route requires one
+    if let Some(feature_key) = state.config.modality_feature_key(&path) {
+        match check_entitlement(&state, entity_type, entity_id, feature_key).await {
+            Ok(true) => {}
+            Ok(false) => {
+                let name = modality_display_name(feature_key);
+                let msg = format!("{name} is not available on your current plan");
+                return (StatusCode::FORBIDDEN, msg).into_response();
+            }
+            Err(e) => {
+                return handle_aether_error(&state.config.fail_mode, e, request, next).await;
+            }
+        }
+    }
+
+    // 3. Check requests usage limit
+    match check_usage(&state, entity_type, entity_id, &state.config.meters.requests, 1.0).await {
         Ok(true) => {}
         Ok(false) => {
-            return (StatusCode::TOO_MANY_REQUESTS, "usage limit exceeded").into_response();
+            return (StatusCode::TOO_MANY_REQUESTS, "monthly request limit exceeded").into_response();
+        }
+        Err(e) => {
+            return handle_aether_error(&state.config.fail_mode, e, request, next).await;
+        }
+    }
+
+    // 4. Check input tokens usage limit
+    // Uses 0.0 because we can't predict token count pre-request; a user who
+    // exceeds their limit mid-request gets blocked on the next request
+    match check_usage(&state, entity_type, entity_id, &state.config.meters.input_tokens, 0.0).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return (StatusCode::TOO_MANY_REQUESTS, "monthly input token limit exceeded").into_response();
+        }
+        Err(e) => {
+            return handle_aether_error(&state.config.fail_mode, e, request, next).await;
+        }
+    }
+
+    // 5. Check output tokens usage limit
+    match check_usage(&state, entity_type, entity_id, &state.config.meters.output_tokens, 0.0).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return (StatusCode::TOO_MANY_REQUESTS, "monthly output token limit exceeded").into_response();
         }
         Err(e) => {
             return handle_aether_error(&state.config.fail_mode, e, request, next).await;
@@ -76,14 +118,13 @@ pub async fn entitlement_middleware(state: EntitlementState, request: Request, n
     next.run(request).await
 }
 
-/// Check `api_access` entitlement, using cache when available
+/// Check an entitlement by feature key, using cache when available
 async fn check_entitlement(
     state: &EntitlementState,
     entity_type: &str,
     entity_id: &str,
+    feature_key: &str,
 ) -> Result<bool, synapse_billing::BillingError> {
-    let feature_key = &state.config.api_access_feature_key;
-
     // Check cache first
     if let Some(cached) = state.cache.get_entitlement(entity_type, entity_id, feature_key) {
         return Ok(cached.has_access);
@@ -109,14 +150,14 @@ async fn check_entitlement(
     Ok(response.has_access)
 }
 
-/// Check usage limit for the requests meter, using cache when available
+/// Check a usage meter limit, using cache when available
 async fn check_usage(
     state: &EntitlementState,
     entity_type: &str,
     entity_id: &str,
+    meter_key: &str,
+    additional_usage: f64,
 ) -> Result<bool, synapse_billing::BillingError> {
-    let meter_key = &state.config.meters.requests;
-
     // Check cache first
     if let Some(cached) = state.cache.get_usage(entity_type, entity_id, meter_key) {
         return Ok(cached.allowed);
@@ -125,7 +166,7 @@ async fn check_usage(
     // Cache miss — call Aether
     let response = state
         .client
-        .check_usage(entity_type, entity_id, meter_key, 1.0)
+        .check_usage(entity_type, entity_id, meter_key, additional_usage)
         .await?;
 
     // Cache the result

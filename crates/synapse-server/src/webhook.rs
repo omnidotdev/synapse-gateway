@@ -59,18 +59,27 @@ pub async fn entitlement_webhook_handler(
             "invalidated cached entitlement"
         );
     } else {
-        // No specific feature key — invalidate common entitlements
-        // The most critical is api_access; usage meters also get cleared
-        state
-            .cache
-            .invalidate_entitlement(&body.entity_type, &body.entity_id, "api_access");
-        state
-            .cache
-            .invalidate_usage(&body.entity_type, &body.entity_id, "requests");
+        // No specific feature key — invalidate all known entitlements and meters
+        for key in [
+            "api_access",
+            "stt_enabled",
+            "tts_enabled",
+            "embeddings_enabled",
+            "image_gen_enabled",
+        ] {
+            state
+                .cache
+                .invalidate_entitlement(&body.entity_type, &body.entity_id, key);
+        }
+        for key in ["requests", "input_tokens", "output_tokens"] {
+            state
+                .cache
+                .invalidate_usage(&body.entity_type, &body.entity_id, key);
+        }
         tracing::debug!(
             entity_type = %body.entity_type,
             entity_id = %body.entity_id,
-            "invalidated all cached entitlements"
+            "invalidated all cached entitlements and usage meters"
         );
     }
 

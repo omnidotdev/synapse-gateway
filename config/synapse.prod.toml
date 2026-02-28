@@ -242,6 +242,12 @@ app_id = "synapse"
 mode = "hybrid"
 fail_mode = "open"
 
+# Modality feature keys (defaults match Aether seed values)
+# stt_feature_key = "stt_enabled"
+# tts_feature_key = "tts_enabled"
+# embeddings_feature_key = "embeddings_enabled"
+# image_gen_feature_key = "image_gen_enabled"
+
 [billing.managed_providers.openai]
 api_key = "{{ env.OPENAI_API_KEY }}"
 margin = 1.2
