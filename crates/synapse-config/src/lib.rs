@@ -2,12 +2,14 @@
 
 pub mod auth;
 pub mod billing;
+pub mod cache;
 pub mod client_identification;
 pub mod client_ip;
 pub mod cors;
 pub mod csrf;
 pub mod embeddings;
 mod env;
+pub mod guardrails;
 pub mod imagegen;
 pub mod headers;
 pub mod health;
@@ -27,10 +29,12 @@ use serde::Deserialize;
 
 pub use auth::*;
 pub use billing::*;
+pub use cache::*;
 pub use client_identification::*;
 pub use cors::*;
 pub use csrf::*;
 pub use embeddings::*;
+pub use guardrails::*;
 pub use headers::*;
 pub use imagegen::*;
 pub use health::*;
@@ -82,4 +86,10 @@ pub struct Config {
     /// Billing and metering configuration
     #[serde(default)]
     pub billing: Option<BillingConfig>,
+    /// Response cache configuration
+    #[serde(default)]
+    pub cache: Option<ResponseCacheConfig>,
+    /// Content guardrails configuration
+    #[serde(default)]
+    pub guardrails: Option<GuardrailsConfig>,
 }

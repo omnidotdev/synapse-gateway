@@ -20,12 +20,14 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 synapse-auth.workspace = true
 synapse-billing.workspace = true
+synapse-cache.workspace = true
 synapse-config.workspace = true
 synapse-core.workspace = true
 synapse-embeddings.workspace = true
 synapse-imagegen.workspace = true
-synapse-llm = { workspace = true, features = ["http", "billing"] }
+synapse-llm = { workspace = true, features = ["http", "billing", "cache"] }
 synapse-mcp.workspace = true
+synapse-guardrails.workspace = true
 synapse-ratelimit.workspace = true
 synapse-telemetry.workspace = true
 stt.workspace = true

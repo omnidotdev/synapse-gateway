@@ -38,6 +38,8 @@ impl ConfigBuilder {
                 proxy: None,
                 billing: None,
                 auth: None,
+                cache: None,
+                guardrails: None,
             },
         }
     }

@@ -13,7 +13,7 @@ async fn embedded_chat_completion() {
         .with_openai_provider("test", &mock.base_url())
         .build();
 
-    let client = SynapseClient::embedded(config.llm).await.unwrap();
+    let client = SynapseClient::embedded(config).await.unwrap();
 
     let request = ChatRequest {
         model: "test/mock-model-1".to_owned(),
@@ -44,7 +44,7 @@ async fn embedded_list_models() {
         .with_openai_provider("test", &mock.base_url())
         .build();
 
-    let client = SynapseClient::embedded(config.llm).await.unwrap();
+    let client = SynapseClient::embedded(config).await.unwrap();
 
     // Allow time for background model discovery to complete
     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
@@ -60,7 +60,7 @@ async fn embedded_stt_returns_error() {
         .with_openai_provider("test", &mock.base_url())
         .build();
 
-    let client = SynapseClient::embedded(config.llm).await.unwrap();
+    let client = SynapseClient::embedded(config).await.unwrap();
     let result = client
         .transcribe(bytes::Bytes::new(), "test.wav", "whisper-1")
         .await;

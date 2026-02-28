@@ -46,6 +46,9 @@ pub(crate) struct LlmStateInner {
     /// Billing client for pre-request credit checks (billing feature only)
     #[cfg(feature = "billing")]
     pub(crate) billing_client: Option<synapse_billing::AetherClient>,
+    /// Response cache (cache feature only)
+    #[cfg(feature = "cache")]
+    pub(crate) response_cache: Option<synapse_cache::ResponseCache>,
 }
 
 impl LlmState {
@@ -60,6 +63,33 @@ impl LlmState {
         request: CompletionRequest,
         mut context: RequestContext,
     ) -> Result<CompletionResponse, LlmError> {
+        // Check response cache for deterministic requests
+        #[cfg(feature = "cache")]
+        let cache_key = if synapse_cache::is_cacheable(request.params.temperature, request.stream) {
+            if let Some(ref cache) = self.inner.response_cache {
+                let key = synapse_cache::compute_cache_key(&request);
+                match cache.get(&key).await {
+                    Ok(Some(cached)) => {
+                        tracing::info!("serving cached response");
+                        let response: CompletionResponse =
+                            serde_json::from_str(&cached.body).map_err(|e| {
+                                LlmError::Internal(anyhow::anyhow!("cache deserialization: {e}"))
+                            })?;
+                        return Ok(response);
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        tracing::warn!(error = %e, "cache lookup failed, proceeding without cache");
+                    }
+                }
+                Some(key)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let (provider_name, model_id, provider, explicit_provider) =
             self.resolve_provider(&request.model, &request).await?;
 
@@ -114,6 +144,23 @@ impl LlmState {
                 usage.completion_tokens,
             )
             .await;
+        }
+
+        // Store successful response in cache
+        #[cfg(feature = "cache")]
+        if let Some(ref key) = cache_key {
+            if let Some(ref cache) = self.inner.response_cache {
+                if let Ok(body) = serde_json::to_string(&response) {
+                    let entry = synapse_cache::CachedResponse {
+                        body,
+                        model: model_id.clone(),
+                        provider: provider_name.clone(),
+                    };
+                    if let Err(e) = cache.put(key, &entry, None).await {
+                        tracing::warn!(error = %e, "failed to cache response");
+                    }
+                }
+            }
         }
 
         Ok(response)
@@ -283,6 +330,8 @@ impl LlmState {
                 usage_recorder: None,
                 #[cfg(feature = "billing")]
                 billing_client: None,
+                #[cfg(feature = "cache")]
+                response_cache: None,
             }),
         })
     }
@@ -332,6 +381,20 @@ impl LlmState {
         Arc::get_mut(&mut self.inner)
             .expect("set_billing_client must be called before state is shared")
             .billing_client = Some(client);
+    }
+
+    /// Attach a response cache for LLM completions
+    ///
+    /// Must be called before the state is shared with handlers.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called after the inner `Arc` has been cloned
+    #[cfg(feature = "cache")]
+    pub fn set_response_cache(&mut self, cache: synapse_cache::ResponseCache) {
+        Arc::get_mut(&mut self.inner)
+            .expect("set_response_cache must be called before state is shared")
+            .response_cache = Some(cache);
     }
 
     /// List all available models across providers

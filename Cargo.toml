@@ -76,6 +76,8 @@ sha2 = "0.10"
 strum = { version = "0.27", features = ["derive"] }
 synapse-auth = { path = "crates/synapse-auth" }
 synapse-billing = { path = "crates/synapse-billing" }
+synapse-cache = { path = "crates/synapse-cache" }
+synapse-guardrails = { path = "crates/synapse-guardrails" }
 synapse-client = { path = "crates/synapse-client" }
 synapse-config = { path = "crates/synapse-config" }
 synapse-core = { path = "crates/synapse-core" }

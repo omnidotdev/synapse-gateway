@@ -11,6 +11,7 @@ repository.workspace = true
 default = ["http"]
 http = ["dep:axum"]
 billing = ["dep:synapse-billing"]
+cache = ["dep:synapse-cache"]
 
 [dependencies]
 anyhow.workspace = true
@@ -32,6 +33,7 @@ secrecy.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 synapse-billing = { workspace = true, optional = true }
+synapse-cache = { workspace = true, optional = true }
 synapse-config.workspace = true
 synapse-core.workspace = true
 synapse-routing.workspace = true

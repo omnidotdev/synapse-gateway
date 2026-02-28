@@ -4847,6 +4847,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "synapse-cache"
+version = "0.1.0"
+dependencies = [
+ "redis",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.16",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "synapse-client"
 version = "0.1.0"
 dependencies = [
@@ -4883,6 +4896,7 @@ dependencies = [
  "secrecy",
  "serde",
  "serde_json",
+ "synapse-guardrails",
  "temp-env",
  "toml",
  "tracing",
@@ -4915,6 +4929,17 @@ dependencies = [
  "serde_json",
  "synapse-config",
  "synapse-core",
+ "thiserror 2.0.16",
+ "tracing",
+]
+
+[[package]]
+name = "synapse-guardrails"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
  "thiserror 2.0.16",
  "tracing",
 ]
@@ -4960,6 +4985,7 @@ dependencies = [
  "serde",
  "serde_json",
  "synapse-billing",
+ "synapse-cache",
  "synapse-config",
  "synapse-core",
  "synapse-ratelimit",
@@ -5052,9 +5078,11 @@ dependencies = [
  "stt",
  "synapse-auth",
  "synapse-billing",
+ "synapse-cache",
  "synapse-config",
  "synapse-core",
  "synapse-embeddings",
+ "synapse-guardrails",
  "synapse-imagegen",
  "synapse-llm",
  "synapse-mcp",

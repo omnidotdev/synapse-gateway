@@ -4,6 +4,7 @@ mod cors;
 mod csrf;
 mod entitlement;
 mod entitlement_cache;
+mod guardrails;
 mod health;
 mod invalidate;
 mod rate_limit;
@@ -85,6 +86,20 @@ impl Server {
             llm_state.set_billing_client(credit_client);
         }
 
+        // Configure response cache when enabled
+        if let Some(ref cache_config) = config.cache
+            && cache_config.enabled
+        {
+            let cache = synapse_cache::ResponseCache::new(
+                cache_config.url.as_str(),
+                std::time::Duration::from_secs(cache_config.ttl_seconds),
+                Some(cache_config.key_prefix.clone()),
+            )
+            .map_err(|e| anyhow::anyhow!("failed to initialize response cache: {e}"))?;
+            llm_state.set_response_cache(cache);
+            tracing::info!(ttl_seconds = cache_config.ttl_seconds, "response cache enabled");
+        }
+
         let mcp_state = Arc::new(McpState::new(&config.mcp).await?);
 
         // Build base router with feature routes
@@ -114,6 +129,25 @@ impl Server {
         app = app.merge(synapse_imagegen::endpoint_router().with_state(imagegen_state));
 
         // Apply middleware layers (innermost first)
+
+        // Content guardrails (runs just before handlers, after all auth/rate limiting)
+        if let Some(ref guardrails_config) = config.guardrails
+            && guardrails_config.enabled
+        {
+            let engine = synapse_guardrails::GuardrailEngine::new(&guardrails_config.rules)
+                .map_err(|e| anyhow::anyhow!("failed to compile guardrail rules: {e}"))?;
+            let engine = Arc::new(engine);
+            if !engine.is_empty() {
+                app = app.layer(axum::middleware::from_fn(move |req, next| {
+                    let engine = Arc::clone(&engine);
+                    async move { guardrails::guardrails_middleware(engine, req, next).await }
+                }));
+                tracing::info!(
+                    rules = guardrails_config.rules.len(),
+                    "guardrails enabled"
+                );
+            }
+        }
 
         // Request context (innermost — collects auth/identity data, runs just before handlers)
         app = app.layer(axum::middleware::from_fn(request_context::request_context_middleware));

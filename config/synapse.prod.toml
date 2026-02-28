@@ -12,7 +12,8 @@ path = "/health"
 
 [server.rate_limit]
 [server.rate_limit.storage]
-type = "memory"
+type = "cache"
+url = "{{ env.VALKEY_URL }}"
 
 [server.rate_limit.global]
 requests = 1000
@@ -41,10 +42,20 @@ api_key = "{{ env.OPENAI_API_KEY }}"
 type = "anthropic"
 api_key = "{{ env.ANTHROPIC_API_KEY }}"
 
+[llm.providers.google]
+type = "google"
+api_key = "{{ env.GOOGLE_API_KEY }}"
+
 [llm.providers.nvidia]
 type = "openai"
 base_url = "https://integrate.api.nvidia.com/v1"
 api_key = "{{ env.NVIDIA_API_KEY }}"
+
+# AWS Bedrock (uses default credential chain; set AWS_REGION, AWS_ACCESS_KEY_ID,
+# AWS_SECRET_ACCESS_KEY env vars or run on AWS infrastructure with an IAM role)
+[llm.providers.bedrock]
+[llm.providers.bedrock.type.bedrock]
+region = "{{ env.AWS_REGION | default(\"us-east-1\") }}"
 
 # ------------------------------------
 # Intelligent Routing
@@ -150,6 +161,42 @@ tool_calling = true
 vision = true
 long_context = true
 
+[[llm.routing.models]]
+provider = "google"
+model = "gemini-2.5-pro"
+input_per_mtok = 1.25
+output_per_mtok = 10.00
+quality = 0.93
+context_window = 1048576
+[llm.routing.models.capabilities]
+tool_calling = true
+vision = true
+long_context = true
+
+[[llm.routing.models]]
+provider = "google"
+model = "gemini-2.5-flash"
+input_per_mtok = 0.15
+output_per_mtok = 0.60
+quality = 0.82
+context_window = 1048576
+[llm.routing.models.capabilities]
+tool_calling = true
+vision = true
+long_context = true
+
+[[llm.routing.models]]
+provider = "bedrock"
+model = "anthropic.claude-sonnet-4-5-20250929-v1:0"
+input_per_mtok = 3.00
+output_per_mtok = 15.00
+quality = 0.93
+context_window = 200000
+[llm.routing.models.capabilities]
+tool_calling = true
+vision = true
+long_context = true
+
 # ------------------------------------
 # Failover
 # ------------------------------------
@@ -160,11 +207,11 @@ max_attempts = 2
 
 [[llm.failover.equivalence_groups]]
 name = "frontier"
-models = ["anthropic/claude-opus-4-6", "anthropic/claude-sonnet-4-5-20250929", "openai/gpt-4o", "anthropic/claude-sonnet-4-20250514", "nvidia/moonshotai/kimi-k2.5"]
+models = ["anthropic/claude-opus-4-6", "anthropic/claude-sonnet-4-5-20250929", "openai/gpt-4o", "anthropic/claude-sonnet-4-20250514", "nvidia/moonshotai/kimi-k2.5", "google/gemini-2.5-pro", "bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0"]
 
 [[llm.failover.equivalence_groups]]
 name = "fast"
-models = ["openai/gpt-4o-mini", "anthropic/claude-haiku-4-5-20251001"]
+models = ["openai/gpt-4o-mini", "anthropic/claude-haiku-4-5-20251001", "google/gemini-2.5-flash"]
 
 [llm.failover.circuit_breaker]
 error_threshold = 5
@@ -259,6 +306,40 @@ margin = 1.15
 [billing.managed_providers.nvidia]
 api_key = "{{ env.NVIDIA_API_KEY }}"
 margin = 1.15
+
+[billing.managed_providers.google]
+api_key = "{{ env.GOOGLE_API_KEY }}"
+margin = 1.15
+
+# ------------------------------------
+# Response Cache
+# ------------------------------------
+
+[cache]
+enabled = true
+url = "{{ env.VALKEY_URL }}"
+ttl_seconds = 3600
+
+# ------------------------------------
+# Guardrails
+# ------------------------------------
+
+[guardrails]
+enabled = true
+check_input = true
+check_output = false
+
+[[guardrails.rules]]
+type = "max_input_tokens"
+name = "input-limit"
+limit = 200000
+action = "block"
+
+[[guardrails.rules]]
+type = "pii"
+name = "pii-detection"
+detect = ["ssn", "credit_card"]
+action = "warn"
 
 # ------------------------------------
 # Telemetry
