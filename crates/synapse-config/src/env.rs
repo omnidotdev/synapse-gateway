@@ -15,10 +15,11 @@ pub fn expand_env(input: &str) -> Result<String, String> {
     fn re() -> &'static Regex {
         static RE: OnceLock<Regex> = OnceLock::new();
         // Matches `{{ env.VAR }}` and `{{ env.VAR | default("fallback") }}`
+        // Also handles TOML-escaped quotes: `{{ env.VAR | default(\"fallback\") }}`
         // Group 1: the key (e.g. `env.VAR_NAME`)
         // Group 2: optional default value inside default("...")
         RE.get_or_init(|| {
-            Regex::new(r#"\{\{\s*([a-zA-Z0-9_.]+)\s*(?:\|\s*default\("([^"]*)"\))?\s*\}\}"#)
+            Regex::new(r#"\{\{\s*([a-zA-Z0-9_.]+)\s*(?:\|\s*default\(\\?"([^"\\]*)\\?"\))?\s*\}\}"#)
                 .expect("must be valid regex")
         })
     }
@@ -169,6 +170,26 @@ mod tests {
         temp_env::with_var_unset("MISSING_VAR", || {
             let result = expand_env("key = \"{{ env.MISSING_VAR | default(\"fallback\") }}\"").unwrap();
             assert_eq!(result, "key = \"fallback\"");
+        });
+    }
+
+    #[test]
+    fn default_with_toml_escaped_quotes() {
+        temp_env::with_var_unset("OTEL_ENDPOINT", || {
+            let result =
+                expand_env(r#"endpoint = "{{ env.OTEL_ENDPOINT | default(\"http://otel-collector:4317\") }}""#)
+                    .unwrap();
+            assert_eq!(result, r#"endpoint = "http://otel-collector:4317""#);
+        });
+    }
+
+    #[test]
+    fn default_with_toml_escaped_quotes_var_present() {
+        temp_env::with_var("OTEL_ENDPOINT", Some("http://custom:4317"), || {
+            let result =
+                expand_env(r#"endpoint = "{{ env.OTEL_ENDPOINT | default(\"http://otel-collector:4317\") }}""#)
+                    .unwrap();
+            assert_eq!(result, r#"endpoint = "http://custom:4317""#);
         });
     }
 
