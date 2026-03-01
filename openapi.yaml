@@ -14,7 +14,7 @@ info:
 servers:
   - url: https://synapse.omni.dev
     description: Production
-  - url: http://localhost:3000
+  - url: http://localhost:6000
     description: Local development
 
 security:
