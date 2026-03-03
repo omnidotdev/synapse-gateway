@@ -8,10 +8,13 @@ use secrecy::SecretString;
 use synapse_auth::ResolvedKey;
 use synapse_core::{Authentication, BillingIdentity, RequestContext};
 
+use crate::auth::VaultProviderKeys;
+
 /// Middleware that constructs a `RequestContext` from the incoming request
 ///
 /// Extracts HTTP parts and any pre-populated authentication/identity
-/// extensions into a unified context for downstream handlers
+/// extensions into a unified context for downstream handlers. When vault-
+/// resolved keys are present, they overlay the synapse-api-provided keys.
 pub async fn request_context_middleware(request: Request, next: Next) -> Response {
     let (parts, body) = request.into_parts();
 
@@ -21,7 +24,7 @@ pub async fn request_context_middleware(request: Request, next: Next) -> Respons
     let billing_identity = parts.extensions.get::<BillingIdentity>().cloned();
 
     // Extract BYOK provider keys from resolved API key context
-    let provider_keys = parts
+    let mut provider_keys = parts
         .extensions
         .get::<Arc<ResolvedKey>>()
         .map(|resolved| {
@@ -32,6 +35,13 @@ pub async fn request_context_middleware(request: Request, next: Next) -> Respons
                 .collect::<HashMap<_, _>>()
         })
         .unwrap_or_default();
+
+    // Overlay vault-resolved keys when present (vault takes precedence)
+    if let Some(vault_keys) = parts.extensions.get::<VaultProviderKeys>() {
+        for (provider, key) in &vault_keys.0 {
+            provider_keys.insert(provider.clone(), key.clone());
+        }
+    }
 
     let context = RequestContext {
         parts: parts.clone(),

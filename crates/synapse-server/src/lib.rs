@@ -231,6 +231,25 @@ impl Server {
                 auth_config.tls_skip_verify,
             )?;
 
+            // Optionally construct VaultClient for BYOK key resolution from Gatekeeper
+            let vault_client: Option<Arc<synapse_auth::VaultClient>> =
+                if let Some(ref vault_config) = auth_config.vault {
+                    let client = synapse_auth::VaultClient::new(
+                        vault_config.url.clone(),
+                        vault_config.service_key.clone(),
+                        Some(std::time::Duration::from_secs(vault_config.cache_ttl_seconds)),
+                        Some(vault_config.cache_capacity),
+                    )?;
+                    tracing::info!(
+                        url = %vault_config.url,
+                        cache_ttl_secs = vault_config.cache_ttl_seconds,
+                        "vault client enabled for BYOK key resolution"
+                    );
+                    Some(Arc::new(client))
+                } else {
+                    None
+                };
+
             // Cache invalidation endpoint
             let invalidate_state = invalidate::InvalidateState {
                 resolver: resolver.clone(),
@@ -252,10 +271,11 @@ impl Server {
             let reporter = Some(usage_reporter);
             app = app.layer(axum::middleware::from_fn(move |req, next| {
                 let resolver = resolver.clone();
+                let vault = vault_client.clone();
                 let public_paths = public_paths.clone();
                 let reporter = reporter.clone();
                 async move {
-                    auth::auth_middleware(resolver, public_paths, reporter, req, next).await
+                    auth::auth_middleware(resolver, vault, public_paths, reporter, req, next).await
                 }
             }));
         }

@@ -1,17 +1,32 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use axum::extract::Request;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use http::StatusCode;
-use synapse_auth::{ApiKeyResolver, KeyMode, UsageReporter};
+use secrecy::{ExposeSecret, SecretString};
+use synapse_auth::{ApiKeyResolver, KeyMode, UsageReporter, VaultClient};
 use synapse_core::{BillingIdentity, BillingMode};
+
+/// Vault-resolved provider keys stored as a request extension
+///
+/// When present, these override the synapse-api-provided `provider_keys`
+/// in the `RequestContext`
+#[derive(Clone, Debug)]
+pub struct VaultProviderKeys(pub HashMap<String, SecretString>);
 
 /// Authenticate requests via API key
 ///
 /// Extracts Bearer token from Authorization header. If it starts with
 /// `synapse_`, resolves it via synapse-api. Skips auth for public paths
 /// and passes through non-synapse tokens for existing auth flows.
+///
+/// When a `VaultClient` is provided and the key mode is BYOK, provider
+/// keys are resolved from Gatekeeper's vault as an overlay
 pub async fn auth_middleware(
     resolver: ApiKeyResolver,
+    vault_client: Option<Arc<VaultClient>>,
     public_paths: Vec<String>,
     usage_reporter: Option<UsageReporter>,
     request: Request,
@@ -49,6 +64,17 @@ pub async fn auth_middleware(
             };
 
             let mut request = request;
+
+            // Resolve BYOK keys from Gatekeeper vault when configured
+            if result.mode == KeyMode::Byok {
+                if let Some(ref vault) = vault_client {
+                    let vault_keys = resolve_vault_keys(vault, &result.user_id, &result.provider_keys).await;
+                    if !vault_keys.is_empty() {
+                        request.extensions_mut().insert(VaultProviderKeys(vault_keys));
+                    }
+                }
+            }
+
             request.extensions_mut().insert(result);
             request.extensions_mut().insert(billing_identity);
             if let Some(reporter) = usage_reporter {
@@ -61,4 +87,39 @@ pub async fn auth_middleware(
             (StatusCode::UNAUTHORIZED, "invalid API key").into_response()
         }
     }
+}
+
+/// Resolve BYOK provider keys from Gatekeeper's vault
+///
+/// Uses the provider list from synapse-api's resolved key to know which
+/// providers to query. Vault keys overlay synapse-api keys: if the vault
+/// has a key for a provider, it takes precedence
+async fn resolve_vault_keys(
+    vault: &VaultClient,
+    user_id: &str,
+    api_provider_keys: &[synapse_auth::ProviderKeyRef],
+) -> HashMap<String, SecretString> {
+    // Collect provider names that the user has configured
+    let providers: Vec<&str> = api_provider_keys.iter().map(|pk| pk.provider.as_str()).collect();
+
+    if providers.is_empty() {
+        return HashMap::new();
+    }
+
+    let vault_keys = vault.resolve_all(user_id, &providers).await;
+
+    let mut keys = HashMap::with_capacity(vault_keys.len());
+    for vk in vault_keys {
+        keys.insert(vk.provider.clone(), SecretString::from(vk.key.expose_secret().to_string()));
+    }
+
+    if !keys.is_empty() {
+        tracing::debug!(
+            user_id,
+            providers = ?keys.keys().collect::<Vec<_>>(),
+            "resolved BYOK keys from vault"
+        );
+    }
+
+    keys
 }
