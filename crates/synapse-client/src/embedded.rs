@@ -154,20 +154,20 @@ pub fn stream_to_chat_events(
             })),
             Ok(llm::StreamEvent::Delta(delta)) => {
                 // Handle tool calls
-                if let Some(ref tc) = delta.tool_call {
-                    if let Some(ref func) = tc.function {
-                        if let (Some(id), Some(name)) = (&tc.id, &func.name) {
-                            return Some(Ok(types::ChatEvent::ToolCallStart {
-                                index: tc.index,
-                                id: id.clone(),
-                                name: name.clone(),
-                            }));
-                        } else if let Some(ref args) = func.arguments {
-                            return Some(Ok(types::ChatEvent::ToolCallDelta {
-                                index: tc.index,
-                                arguments: args.clone(),
-                            }));
-                        }
+                if let Some(ref tc) = delta.tool_call
+                    && let Some(ref func) = tc.function
+                {
+                    if let (Some(id), Some(name)) = (&tc.id, &func.name) {
+                        return Some(Ok(types::ChatEvent::ToolCallStart {
+                            index: tc.index,
+                            id: id.clone(),
+                            name: name.clone(),
+                        }));
+                    } else if let Some(ref args) = func.arguments {
+                        return Some(Ok(types::ChatEvent::ToolCallDelta {
+                            index: tc.index,
+                            arguments: args.clone(),
+                        }));
                     }
                 }
 
