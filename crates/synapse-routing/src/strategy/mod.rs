@@ -4,11 +4,11 @@ use std::collections::HashMap;
 
 use synapse_config::RoutingConfig;
 
+use crate::RoutingDecision;
 use crate::analysis::QueryProfile;
 use crate::error::RoutingError;
 use crate::feedback::FeedbackTracker;
 use crate::registry::ModelRegistry;
-use crate::RoutingDecision;
 
 pub mod cascade;
 pub mod cost;
