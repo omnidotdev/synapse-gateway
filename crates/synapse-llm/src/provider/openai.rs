@@ -128,6 +128,11 @@ impl Provider for OpenAiProvider {
                 status = %status,
                 "upstream returned error"
             );
+
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                return Err(LlmError::RateLimited { retry_after: 0 });
+            }
+
             return Err(LlmError::Upstream(format!("provider returned {status}: {body}")));
         }
 
@@ -176,6 +181,16 @@ impl Provider for OpenAiProvider {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
+            tracing::warn!(
+                provider = %self.name,
+                status = %status,
+                "upstream returned error"
+            );
+
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                return Err(LlmError::RateLimited { retry_after: 0 });
+            }
+
             return Err(LlmError::Upstream(format!("provider returned {status}: {body}")));
         }
 

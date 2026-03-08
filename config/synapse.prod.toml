@@ -24,7 +24,7 @@ requests = 120
 window = "1m"
 
 [server.cors]
-origins = ["https://dashboard.synapse.omni.dev"]
+origins = ["https://synapse.omni.dev"]
 methods = ["GET", "POST", "OPTIONS"]
 headers = ["Content-Type", "Authorization", "X-Api-Key"]
 credentials = true
