@@ -30,18 +30,13 @@ pub struct CorsConfig {
 }
 
 /// Either a wildcard "*" or explicit list of values
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub enum AnyOrArray {
     /// Match any value
+    #[default]
     Any,
     /// Explicit list
     List(Vec<String>),
-}
-
-impl Default for AnyOrArray {
-    fn default() -> Self {
-        Self::Any
-    }
 }
 
 impl<'de> Deserialize<'de> for AnyOrArray {

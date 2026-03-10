@@ -26,19 +26,14 @@ pub enum GuardrailError {
 }
 
 /// Action to take when a rule matches
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
     /// Block the request with a 403 response
+    #[default]
     Block,
     /// Log a warning but allow the request through
     Warn,
-}
-
-impl Default for Action {
-    fn default() -> Self {
-        Self::Block
-    }
 }
 
 /// A single guardrail rule
