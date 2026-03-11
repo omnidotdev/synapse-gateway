@@ -58,6 +58,6 @@ COPY config/synapse.prod.toml /etc/synapse.toml
 WORKDIR /data
 
 ENTRYPOINT ["/bin/synapse"]
-CMD ["--config", "/etc/synapse.toml", "--listen", "0.0.0.0:3000"]
+CMD ["--config", "/etc/synapse.toml", "--listen", "[::]:3000"]
 
 EXPOSE 3000

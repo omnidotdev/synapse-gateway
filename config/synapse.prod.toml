@@ -4,7 +4,7 @@
 # Secrets are interpolated from environment variables at runtime.
 
 [server]
-listen_address = "0.0.0.0:3000"
+listen_address = "[::]:3000"
 
 [server.health]
 enabled = true
