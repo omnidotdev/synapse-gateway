@@ -63,6 +63,7 @@ reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls-webpki-roots",
     "charset",
     "http2",
+    "hickory-dns",
     "macos-system-configuration",
 ] }
 rmcp = "0.7.0"
