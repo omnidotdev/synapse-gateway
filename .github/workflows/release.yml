@@ -237,7 +237,7 @@ jobs:
             desc "AI model router and gateway"
             homepage "https://synapse.omni.dev"
             version "${VERSION}"
-            license "MIT"
+            license "Apache-2.0"
 
             on_macos do
               on_arm do
