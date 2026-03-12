@@ -5,8 +5,8 @@ info:
   description: AI router for unified LLM, MCP, STT, TTS, embeddings, and image generation
   version: 0.1.0
   license:
-    name: MIT
-    url: https://opensource.org/licenses/MIT
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
   contact:
     name: Omni
     url: https://synapse.omni.dev
