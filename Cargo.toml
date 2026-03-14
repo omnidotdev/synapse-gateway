@@ -96,7 +96,7 @@ tantivy = "0.25.0"
 temp-env = "0.3"
 tempfile = "3.14.0"
 thiserror = "2.0.12"
-tiktoken-rs = "0.7"
+tiktoken-rs = "0.9"
 tokio = { version = "1.46.1", default-features = false }
 tokio-util = "0.7"
 toml = "0.9.2"
