@@ -1,7 +1,4 @@
-use std::borrow::Cow;
-use std::sync::Arc;
-
-use rmcp::model::{CallToolRequestParam, CallToolResult, Tool};
+use rmcp::model::{CallToolRequestParams, CallToolResult, Tool};
 use rmcp::service::{RoleClient, RunningService, ServiceExt as _};
 use rmcp::transport::TokioChildProcess;
 use synapse_config::{HttpConfig, McpAuthConfig, McpServerType, StdioConfig};
@@ -50,20 +47,19 @@ impl McpClient {
     }
 
     async fn connect_sse(config: &HttpConfig) -> Result<RunningService<RoleClient, ()>, McpError> {
-        use rmcp::transport::SseClientTransport;
-        use rmcp::transport::sse_client::SseClientConfig;
+        use rmcp::transport::StreamableHttpClientTransport;
+        use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 
-        let sse_config = SseClientConfig {
-            sse_endpoint: Arc::from(config.url.as_str()),
-            ..Default::default()
-        };
+        let mut transport_config = StreamableHttpClientTransportConfig::with_uri(config.url.as_str());
 
-        // Build client with auth header if configured
-        let client = build_reqwest_client(config.auth.as_ref())?;
+        // Apply auth header if configured
+        if let Some(McpAuthConfig::Token { ref token }) = config.auth {
+            use secrecy::ExposeSecret;
+            transport_config = transport_config.auth_header(format!("Bearer {}", token.expose_secret()));
+        }
 
-        let transport = SseClientTransport::start_with_client(client, sse_config)
-            .await
-            .map_err(|e| McpError::Transport(format!("SSE connection failed: {e}")))?;
+        let client = reqwest::Client::new();
+        let transport = StreamableHttpClientTransport::with_client(client, transport_config);
 
         ().serve(transport)
             .await
@@ -109,12 +105,11 @@ impl McpClient {
         // First attempt — clone arguments so we retain them for the retry
         let first_result = {
             let guard = self.service.lock().await;
-            guard
-                .call_tool(CallToolRequestParam {
-                    name: Cow::Owned(name.to_string()),
-                    arguments: arguments.clone(),
-                })
-                .await
+            let mut params = CallToolRequestParams::new(name.to_string());
+            if let Some(ref args) = arguments {
+                params = params.with_arguments(args.clone());
+            }
+            guard.call_tool(params).await
         };
 
         if let Ok(result) = first_result {
@@ -133,18 +128,16 @@ impl McpClient {
         let mut guard = self.service.lock().await;
         *guard = new_service;
 
-        guard
-            .call_tool(CallToolRequestParam {
-                name: Cow::Owned(name.to_string()),
-                arguments,
-            })
-            .await
-            .map_err(|e| {
-                McpError::Execution(format!(
-                    "tool '{}' failed on {} after reconnect: {e}",
-                    name, self.server_name
-                ))
-            })
+        let mut params = CallToolRequestParams::new(name.to_string());
+        if let Some(args) = arguments {
+            params = params.with_arguments(args);
+        }
+        guard.call_tool(params).await.map_err(|e| {
+            McpError::Execution(format!(
+                "tool '{}' failed on {} after reconnect: {e}",
+                name, self.server_name
+            ))
+        })
     }
 
     /// Get the server name
@@ -161,22 +154,4 @@ impl McpClient {
             .map_err(|e| McpError::Transport(format!("shutdown failed: {e}")))?;
         Ok(())
     }
-}
-
-/// Build a reqwest client with optional auth headers
-fn build_reqwest_client(auth: Option<&McpAuthConfig>) -> Result<reqwest::Client, McpError> {
-    let mut builder = reqwest::Client::builder();
-
-    if let Some(McpAuthConfig::Token { token }) = auth {
-        use secrecy::ExposeSecret;
-        let mut headers = reqwest::header::HeaderMap::new();
-        let val = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token.expose_secret()))
-            .map_err(|e| McpError::Transport(format!("invalid auth token: {e}")))?;
-        headers.insert(reqwest::header::AUTHORIZATION, val);
-        builder = builder.default_headers(headers);
-    }
-
-    builder
-        .build()
-        .map_err(|e| McpError::Transport(format!("failed to build HTTP client: {e}")))
 }

@@ -8,20 +8,23 @@ use synapse_core::{Authentication, BillingIdentity, BillingMode};
 /// Header that clients use to forward their own provider API key
 const PROVIDER_KEY_HEADER: &str = "x-provider-api-key";
 
-/// Middleware that resolves billing identity from the JWT
+/// Middleware that resolves billing identity from the JWT as a fallback
 ///
-/// Extracts the `sub` claim from the validated JWT token and
-/// determines the billing mode based on whether the user provided
-/// their own provider key
-pub async fn billing_identity_middleware(
-    config: BillingConfig,
-    request: Request,
-    next: Next,
-) -> Response {
+/// Skips if a `BillingIdentity` was already set by a prior middleware
+/// (e.g. API key auth). Otherwise extracts the `sub` claim from the
+/// validated JWT token and determines the billing mode based on whether
+/// the user provided their own provider key
+pub async fn billing_identity_middleware(config: BillingConfig, request: Request, next: Next) -> Response {
+    // Skip if billing identity was already resolved (e.g. by API key auth)
+    if request.extensions().get::<BillingIdentity>().is_some() {
+        return next.run(request).await;
+    }
+
     let auth = request.extensions().get::<Authentication>().cloned();
 
     let Some(auth) = auth else {
-        return (StatusCode::UNAUTHORIZED, "billing enabled but no authentication present").into_response();
+        // No authentication present — let downstream middleware decide
+        return next.run(request).await;
     };
 
     let Some(ref token) = auth.synapse else {
@@ -69,14 +72,8 @@ mod tests {
 
     #[test]
     fn byok_mode_always_returns_byok() {
-        assert_eq!(
-            resolve_billing_mode(&OperatingMode::Byok, false),
-            BillingMode::Byok
-        );
-        assert_eq!(
-            resolve_billing_mode(&OperatingMode::Byok, true),
-            BillingMode::Byok
-        );
+        assert_eq!(resolve_billing_mode(&OperatingMode::Byok, false), BillingMode::Byok);
+        assert_eq!(resolve_billing_mode(&OperatingMode::Byok, true), BillingMode::Byok);
     }
 
     #[test]
@@ -93,10 +90,7 @@ mod tests {
 
     #[test]
     fn hybrid_mode_detects_from_provider_key() {
-        assert_eq!(
-            resolve_billing_mode(&OperatingMode::Hybrid, true),
-            BillingMode::Byok
-        );
+        assert_eq!(resolve_billing_mode(&OperatingMode::Hybrid, true), BillingMode::Byok);
         assert_eq!(
             resolve_billing_mode(&OperatingMode::Hybrid, false),
             BillingMode::Managed

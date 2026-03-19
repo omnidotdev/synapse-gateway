@@ -46,11 +46,16 @@ async fn embedded_list_models() {
 
     let client = SynapseClient::embedded(config).await.unwrap();
 
-    // Allow time for background model discovery to complete
-    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-
-    let models = client.list_models().await.unwrap();
-    assert!(!models.is_empty());
+    // Poll for background model discovery to complete
+    let mut models = Vec::new();
+    for _ in 0..20 {
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        models = client.list_models().await.unwrap();
+        if !models.is_empty() {
+            break;
+        }
+    }
+    assert!(!models.is_empty(), "model discovery did not complete within 2s");
 }
 
 #[tokio::test]

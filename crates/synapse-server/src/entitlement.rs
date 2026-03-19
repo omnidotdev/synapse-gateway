@@ -5,7 +5,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use http::StatusCode;
 use synapse_billing::AetherClient;
-use synapse_config::{BillingConfig, FailMode, modality_display_name};
+use synapse_config::{BillingConfig, FailMode};
 use synapse_core::BillingIdentity;
 
 use crate::entitlement_cache::{CachedEntitlement, CachedUsageCheck, EntitlementCache};
@@ -58,7 +58,10 @@ pub async fn entitlement_middleware(state: EntitlementState, request: Request, n
     match check_entitlement(&state, entity_type, entity_id, &state.config.api_access_feature_key).await {
         Ok(true) => {}
         Ok(false) => {
-            return (StatusCode::FORBIDDEN, "API access not granted for this account").into_response();
+            let err = synapse_billing::BillingError::EntitlementDenied {
+                feature_key: state.config.api_access_feature_key.clone(),
+            };
+            return (StatusCode::FORBIDDEN, err.to_string()).into_response();
         }
         Err(e) => {
             return handle_aether_error(&state.config.fail_mode, e, request, next).await;
@@ -70,9 +73,10 @@ pub async fn entitlement_middleware(state: EntitlementState, request: Request, n
         match check_entitlement(&state, entity_type, entity_id, feature_key).await {
             Ok(true) => {}
             Ok(false) => {
-                let name = modality_display_name(feature_key);
-                let msg = format!("{name} is not available on your current plan");
-                return (StatusCode::FORBIDDEN, msg).into_response();
+                let err = synapse_billing::BillingError::EntitlementDenied {
+                    feature_key: feature_key.to_string(),
+                };
+                return (StatusCode::FORBIDDEN, err.to_string()).into_response();
             }
             Err(e) => {
                 return handle_aether_error(&state.config.fail_mode, e, request, next).await;
@@ -84,7 +88,10 @@ pub async fn entitlement_middleware(state: EntitlementState, request: Request, n
     match check_usage(&state, entity_type, entity_id, &state.config.meters.requests, 1.0).await {
         Ok(true) => {}
         Ok(false) => {
-            return (StatusCode::TOO_MANY_REQUESTS, "monthly request limit exceeded").into_response();
+            let err = synapse_billing::BillingError::UsageLimitExceeded {
+                meter_key: state.config.meters.requests.clone(),
+            };
+            return (StatusCode::TOO_MANY_REQUESTS, err.to_string()).into_response();
         }
         Err(e) => {
             return handle_aether_error(&state.config.fail_mode, e, request, next).await;
@@ -97,7 +104,10 @@ pub async fn entitlement_middleware(state: EntitlementState, request: Request, n
     match check_usage(&state, entity_type, entity_id, &state.config.meters.input_tokens, 0.0).await {
         Ok(true) => {}
         Ok(false) => {
-            return (StatusCode::TOO_MANY_REQUESTS, "monthly input token limit exceeded").into_response();
+            let err = synapse_billing::BillingError::UsageLimitExceeded {
+                meter_key: state.config.meters.input_tokens.clone(),
+            };
+            return (StatusCode::TOO_MANY_REQUESTS, err.to_string()).into_response();
         }
         Err(e) => {
             return handle_aether_error(&state.config.fail_mode, e, request, next).await;
@@ -108,7 +118,10 @@ pub async fn entitlement_middleware(state: EntitlementState, request: Request, n
     match check_usage(&state, entity_type, entity_id, &state.config.meters.output_tokens, 0.0).await {
         Ok(true) => {}
         Ok(false) => {
-            return (StatusCode::TOO_MANY_REQUESTS, "monthly output token limit exceeded").into_response();
+            let err = synapse_billing::BillingError::UsageLimitExceeded {
+                meter_key: state.config.meters.output_tokens.clone(),
+            };
+            return (StatusCode::TOO_MANY_REQUESTS, err.to_string()).into_response();
         }
         Err(e) => {
             return handle_aether_error(&state.config.fail_mode, e, request, next).await;
