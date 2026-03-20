@@ -57,7 +57,7 @@ opentelemetry-otlp = { version = "0.31", features = [
 opentelemetry-semantic-conventions = "0.31"
 opentelemetry_sdk = { version = "0.31", features = ["logs", "metrics", "trace", "rt-tokio"] }
 rand = "0.9"
-redis = { version = "0.32.7", features = ["tokio-rustls-comp", "connection-manager"] }
+redis = { version = "1.0", features = ["tokio-rustls-comp", "connection-manager"] }
 regex = "1.12.3"
 reqwest = { version = "0.13", default-features = false, features = [
     "rustls",
@@ -99,7 +99,7 @@ thiserror = "2.0.18"
 tiktoken-rs = "0.7"
 tokio = { version = "1.50.0", default-features = false }
 tokio-util = "0.7"
-toml = "0.9.12"
+toml = "1.0"
 tonic = "0.14"
 tracing = "0.1"
 tracing-opentelemetry = "0.32"

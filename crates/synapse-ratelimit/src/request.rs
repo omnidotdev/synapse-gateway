@@ -15,7 +15,7 @@ pub struct RequestLimiter {
 
 enum Limiter {
     Memory(MemoryLimiter),
-    Cache(CacheLimiter),
+    Cache(Box<CacheLimiter>),
 }
 
 impl RequestLimiter {
@@ -58,11 +58,11 @@ fn build_limiter(storage: &RateLimitStorage, rate_limit: &RequestRateLimit) -> R
 
     match storage {
         RateLimitStorage::Memory => Ok(Limiter::Memory(MemoryLimiter::new(rate_limit.requests, window)?)),
-        RateLimitStorage::Cache(cache_config) => Ok(Limiter::Cache(CacheLimiter::new(
+        RateLimitStorage::Cache(cache_config) => Ok(Limiter::Cache(Box::new(CacheLimiter::new(
             cache_config.url.as_str(),
             rate_limit.requests,
             window,
-        )?)),
+        )?))),
     }
 }
 
