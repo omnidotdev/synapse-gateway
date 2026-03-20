@@ -1,7 +1,7 @@
 use axum::body::Body;
 use secrecy::SecretString;
 use serde::de::DeserializeOwned;
-use synapse_core::{Authentication, ClientIdentity};
+use synapse_core::{Authentication, BillingIdentity, ClientIdentity};
 
 /// Header name for user-provided API keys (BYOK)
 const PROVIDER_API_KEY_HEADER: &str = "X-Provider-API-Key";
@@ -19,6 +19,9 @@ pub struct RequestContext {
     pub client_identity: Option<ClientIdentity>,
 
     pub authentication: Authentication,
+
+    /// Billing identity resolved from JWT, if billing is enabled
+    pub billing_identity: Option<BillingIdentity>,
 }
 
 #[allow(dead_code)]
@@ -95,6 +98,7 @@ where
                 .map(SecretString::from),
             client_identity: parts.extensions.remove(),
             authentication: parts.extensions.remove().unwrap_or_default(),
+            billing_identity: parts.extensions.remove(),
             parts,
         };
 

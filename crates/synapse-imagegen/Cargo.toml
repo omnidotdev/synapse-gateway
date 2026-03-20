@@ -7,6 +7,9 @@ homepage.workspace = true
 keywords.workspace = true
 repository.workspace = true
 
+[features]
+billing = ["dep:synapse-billing", "dep:uuid", "dep:tokio"]
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
@@ -15,10 +18,13 @@ reqwest = { workspace = true, features = ["json"] }
 secrecy.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+synapse-billing = { workspace = true, optional = true }
 synapse-config.workspace = true
 synapse-core.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, optional = true }
 tracing.workspace = true
+uuid = { workspace = true, features = ["v4"], optional = true }
 
 [lints]
 workspace = true

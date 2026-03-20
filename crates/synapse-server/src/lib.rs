@@ -34,6 +34,11 @@ impl Server {
     ///
     /// Returns an error if subsystem initialization (LLM, MCP, STT, TTS) or
     /// rate-limiter construction fails
+    ///
+    /// # Panics
+    ///
+    /// Panics if billing is configured but subsystem `Arc` states have already
+    /// been shared (this should never happen during initialization)
     #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     pub async fn new(config: Config) -> anyhow::Result<Self> {
         let listen_address = config
@@ -42,17 +47,17 @@ impl Server {
             .unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 3000)));
 
         // Initialize subsystems that borrow config before LLM consumes it
-        let stt_state = stt::build_server(&config)?;
-        let tts_state = tts::build_server(&config)?;
-        let embeddings_state = synapse_embeddings::build_server(&config)?;
-        let imagegen_state = synapse_imagegen::build_server(&config)?;
+        let mut stt_state = stt::build_server(&config)?;
+        let mut tts_state = tts::build_server(&config)?;
+        let mut embeddings_state = synapse_embeddings::build_server(&config)?;
+        let mut imagegen_state = synapse_imagegen::build_server(&config)?;
         let mut llm_state = LlmState::from_config(config.llm).await?;
 
-        // Configure billing for LLM state when enabled
+        // Configure billing for all modalities when enabled
         if let Some(ref billing_config) = config.billing
             && billing_config.enabled
         {
-            // Set managed provider keys
+            // Set managed provider keys for LLM
             use secrecy::SecretString;
             use std::collections::HashMap;
 
@@ -64,7 +69,7 @@ impl Server {
             }
             llm_state.set_managed_providers(managed_keys, managed_margins);
 
-            // Attach usage recorder
+            // Attach usage recorder for LLM
             let recorder_client = synapse_billing::AetherClient::new(
                 billing_config.aether_url.clone(),
                 billing_config.app_id.clone(),
@@ -78,13 +83,105 @@ impl Server {
             let recorder = synapse_billing::UsageRecorder::new(recorder_client, meter_keys);
             llm_state.set_usage_recorder(recorder);
 
-            // Attach billing client for pre-request credit checks
+            // Attach billing client for pre-request credit checks (LLM)
             let credit_client = synapse_billing::AetherClient::new(
                 billing_config.aether_url.clone(),
                 billing_config.app_id.clone(),
                 billing_config.service_api_key.clone(),
             )?;
             llm_state.set_billing_client(credit_client);
+
+            // Wire billing into STT
+            {
+                let client = synapse_billing::AetherClient::new(
+                    billing_config.aether_url.clone(),
+                    billing_config.app_id.clone(),
+                    billing_config.service_api_key.clone(),
+                )?;
+                let recorder_client = synapse_billing::AetherClient::new(
+                    billing_config.aether_url.clone(),
+                    billing_config.app_id.clone(),
+                    billing_config.service_api_key.clone(),
+                )?;
+                let meter_keys = synapse_billing::MeterKeys {
+                    input_tokens: billing_config.meters.input_tokens.clone(),
+                    output_tokens: billing_config.meters.output_tokens.clone(),
+                    requests: billing_config.meters.requests.clone(),
+                };
+                let recorder = synapse_billing::UsageRecorder::new(recorder_client, meter_keys);
+                let stt = Arc::get_mut(&mut stt_state).expect("STT state not yet shared");
+                stt.set_billing_client(client);
+                stt.set_usage_recorder(recorder);
+            }
+
+            // Wire billing into TTS
+            {
+                let client = synapse_billing::AetherClient::new(
+                    billing_config.aether_url.clone(),
+                    billing_config.app_id.clone(),
+                    billing_config.service_api_key.clone(),
+                )?;
+                let recorder_client = synapse_billing::AetherClient::new(
+                    billing_config.aether_url.clone(),
+                    billing_config.app_id.clone(),
+                    billing_config.service_api_key.clone(),
+                )?;
+                let meter_keys = synapse_billing::MeterKeys {
+                    input_tokens: billing_config.meters.input_tokens.clone(),
+                    output_tokens: billing_config.meters.output_tokens.clone(),
+                    requests: billing_config.meters.requests.clone(),
+                };
+                let recorder = synapse_billing::UsageRecorder::new(recorder_client, meter_keys);
+                let tts = Arc::get_mut(&mut tts_state).expect("TTS state not yet shared");
+                tts.set_billing_client(client);
+                tts.set_usage_recorder(recorder);
+            }
+
+            // Wire billing into embeddings
+            {
+                let client = synapse_billing::AetherClient::new(
+                    billing_config.aether_url.clone(),
+                    billing_config.app_id.clone(),
+                    billing_config.service_api_key.clone(),
+                )?;
+                let recorder_client = synapse_billing::AetherClient::new(
+                    billing_config.aether_url.clone(),
+                    billing_config.app_id.clone(),
+                    billing_config.service_api_key.clone(),
+                )?;
+                let meter_keys = synapse_billing::MeterKeys {
+                    input_tokens: billing_config.meters.input_tokens.clone(),
+                    output_tokens: billing_config.meters.output_tokens.clone(),
+                    requests: billing_config.meters.requests.clone(),
+                };
+                let recorder = synapse_billing::UsageRecorder::new(recorder_client, meter_keys);
+                let emb = Arc::get_mut(&mut embeddings_state).expect("embeddings state not yet shared");
+                emb.set_billing_client(client);
+                emb.set_usage_recorder(recorder);
+            }
+
+            // Wire billing into image generation
+            {
+                let client = synapse_billing::AetherClient::new(
+                    billing_config.aether_url.clone(),
+                    billing_config.app_id.clone(),
+                    billing_config.service_api_key.clone(),
+                )?;
+                let recorder_client = synapse_billing::AetherClient::new(
+                    billing_config.aether_url.clone(),
+                    billing_config.app_id.clone(),
+                    billing_config.service_api_key.clone(),
+                )?;
+                let meter_keys = synapse_billing::MeterKeys {
+                    input_tokens: billing_config.meters.input_tokens.clone(),
+                    output_tokens: billing_config.meters.output_tokens.clone(),
+                    requests: billing_config.meters.requests.clone(),
+                };
+                let recorder = synapse_billing::UsageRecorder::new(recorder_client, meter_keys);
+                let img = Arc::get_mut(&mut imagegen_state).expect("imagegen state not yet shared");
+                img.set_billing_client(client);
+                img.set_usage_recorder(recorder);
+            }
         }
 
         // Configure response cache when enabled

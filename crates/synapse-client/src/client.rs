@@ -313,6 +313,7 @@ impl SynapseClient {
                     api_key: None,
                     client_identity: None,
                     authentication: synapse_core::Authentication::default(),
+                    billing_identity: None,
                 };
 
                 let resp = server
@@ -370,6 +371,7 @@ impl SynapseClient {
                     api_key: None,
                     client_identity: None,
                     authentication: synapse_core::Authentication::default(),
+                    billing_identity: None,
                 };
 
                 let resp = server

@@ -18,7 +18,8 @@ use synapse_core::RequestContext;
 pub use error::{EmbeddingsError, Result};
 pub use types::{EmbedInput, EmbeddingData, EmbeddingRequest, EmbeddingResponse, EmbeddingUsage};
 
-use server::{EmbeddingsServerBuilder, Server};
+use server::EmbeddingsServerBuilder;
+pub use server::Server;
 
 /// Build the embeddings server from configuration
 ///

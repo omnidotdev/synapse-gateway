@@ -1,6 +1,6 @@
 use axum::body::Body;
 use secrecy::SecretString;
-use synapse_core::{Authentication, ClientIdentity};
+use synapse_core::{Authentication, BillingIdentity, ClientIdentity};
 
 use crate::types::TranscriptionRequest;
 
@@ -20,6 +20,9 @@ pub struct RequestContext {
     pub client_identity: Option<ClientIdentity>,
 
     pub authentication: Authentication,
+
+    /// Billing identity resolved from JWT, if billing is enabled
+    pub billing_identity: Option<BillingIdentity>,
 }
 
 #[allow(dead_code)]
@@ -224,6 +227,7 @@ where
                 .map(SecretString::from),
             client_identity: parts.extensions.remove(),
             authentication: parts.extensions.remove().unwrap_or_default(),
+            billing_identity: parts.extensions.remove(),
             parts,
         };
 

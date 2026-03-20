@@ -145,6 +145,19 @@ impl LlmState {
             .await;
         }
 
+        // Report usage to synapse-api for dashboard charts
+        if let Some(ref usage) = response.usage {
+            dispatch_usage_report(
+                &context,
+                &provider_name,
+                &model_id,
+                usage.prompt_tokens,
+                usage.completion_tokens,
+                &self.inner.model_registry,
+                &self.inner.managed_margins,
+            );
+        }
+
         // Store successful response in cache
         #[cfg(feature = "cache")]
         if let Some(ref key) = cache_key
@@ -170,6 +183,7 @@ impl LlmState {
     /// # Errors
     ///
     /// Returns an error if model resolution or all provider attempts fail
+    #[allow(clippy::too_many_lines)]
     pub async fn complete_stream(
         &self,
         request: CompletionRequest,
@@ -218,7 +232,10 @@ impl LlmState {
                 .await?
         };
 
-        // Wrap stream to intercept usage events for billing
+        // Wrap stream to intercept usage events for billing and reporting
+        let usage_reporter = context.parts.extensions.get::<synapse_auth::UsageReporter>().cloned();
+        let resolved_key = context.parts.extensions.get::<synapse_auth::ResolvedKey>().cloned();
+
         #[cfg(feature = "billing")]
         if let Some(ref recorder) = self.inner.usage_recorder {
             let recorder = recorder.clone();
@@ -226,6 +243,8 @@ impl LlmState {
             let ctx = context.clone();
             let prov = provider_name.clone();
             let mdl = model_id.clone();
+            let reporter = usage_reporter;
+            let resolved = resolved_key;
 
             let billing_client = inner.billing_client.clone();
             let metered_stream = stream.map(move |item| {
@@ -254,11 +273,52 @@ impl LlmState {
                             &inner.managed_margins,
                         );
                     }
+
+                    // Report usage to synapse-api for dashboard charts
+                    if let Some(ref reporter) = reporter
+                        && let Some(ref resolved) = resolved
+                    {
+                        record_usage_report(
+                            reporter,
+                            resolved,
+                            &prov,
+                            &mdl,
+                            usage.prompt_tokens,
+                            usage.completion_tokens,
+                            &inner.model_registry,
+                            &inner.managed_margins,
+                        );
+                    }
                 }
                 item
             });
 
             return Ok((actual_model, Box::pin(metered_stream)));
+        }
+
+        // Non-billing path: still report usage for dashboard charts
+        if let (Some(reporter), Some(resolved)) = (usage_reporter, resolved_key) {
+            let inner = Arc::clone(&self.inner);
+            let prov = provider_name.clone();
+            let mdl = model_id.clone();
+
+            let reporting_stream = stream.map(move |item| {
+                if let Ok(StreamEvent::Usage(ref usage)) = item {
+                    record_usage_report(
+                        &reporter,
+                        &resolved,
+                        &prov,
+                        &mdl,
+                        usage.prompt_tokens,
+                        usage.completion_tokens,
+                        &inner.model_registry,
+                        &inner.managed_margins,
+                    );
+                }
+                item
+            });
+
+            return Ok((actual_model, Box::pin(reporting_stream)));
         }
 
         Ok((actual_model, stream))
@@ -1258,6 +1318,74 @@ fn dispatch_usage_event(
         output_tokens,
         estimated_cost_usd,
         idempotency_key,
+    });
+}
+
+/// Dispatch a usage event to the synapse-api usage reporter for dashboard charts
+fn dispatch_usage_report(
+    context: &RequestContext,
+    provider_name: &str,
+    model_id: &str,
+    input_tokens: u32,
+    output_tokens: u32,
+    model_registry: &ModelRegistry,
+    managed_margins: &HashMap<String, f64>,
+) {
+    let Some(reporter) = context.parts.extensions.get::<synapse_auth::UsageReporter>() else {
+        return;
+    };
+
+    let Some(resolved) = context.parts.extensions.get::<synapse_auth::ResolvedKey>() else {
+        return;
+    };
+
+    record_usage_report(
+        reporter,
+        resolved,
+        provider_name,
+        model_id,
+        input_tokens,
+        output_tokens,
+        model_registry,
+        managed_margins,
+    );
+}
+
+/// Build and record a usage event to synapse-api
+#[allow(clippy::too_many_arguments)]
+fn record_usage_report(
+    reporter: &synapse_auth::UsageReporter,
+    resolved: &synapse_auth::ResolvedKey,
+    provider_name: &str,
+    model_id: &str,
+    input_tokens: u32,
+    output_tokens: u32,
+    model_registry: &ModelRegistry,
+    managed_margins: &HashMap<String, f64>,
+) {
+    let estimated_cost_usd = model_registry.find(provider_name, model_id).map_or(0.0, |profile| {
+        let base = profile.estimate_cost(input_tokens as usize, output_tokens as usize);
+        let margin = managed_margins.get(provider_name).copied().unwrap_or(1.0);
+        base * margin
+    });
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let cost_cents = (estimated_cost_usd * 100.0).round() as u32;
+
+    let mode = match resolved.mode {
+        synapse_auth::KeyMode::Byok => "byok",
+        synapse_auth::KeyMode::Managed | synapse_auth::KeyMode::Manual => "managed",
+    };
+
+    reporter.record(synapse_auth::UsageEvent {
+        user_id: resolved.user_id.clone(),
+        workspace_id: resolved.workspace_id.clone(),
+        api_key_id: resolved.api_key_id.clone(),
+        provider: provider_name.to_owned(),
+        model: model_id.to_owned(),
+        input_tokens,
+        output_tokens,
+        cost_cents,
+        mode: mode.to_owned(),
     });
 }
 

@@ -4840,10 +4840,13 @@ dependencies = [
  "secrecy",
  "serde",
  "serde_json",
+ "synapse-billing",
  "synapse-config",
  "synapse-core",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -5006,10 +5009,13 @@ dependencies = [
  "secrecy",
  "serde",
  "serde_json",
+ "synapse-billing",
  "synapse-config",
  "synapse-core",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -5034,10 +5040,13 @@ dependencies = [
  "secrecy",
  "serde",
  "serde_json",
+ "synapse-billing",
  "synapse-config",
  "synapse-core",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -5063,6 +5072,7 @@ dependencies = [
  "secrecy",
  "serde",
  "serde_json",
+ "synapse-auth",
  "synapse-billing",
  "synapse-cache",
  "synapse-config",
@@ -5908,10 +5918,13 @@ dependencies = [
  "secrecy",
  "serde",
  "serde_json",
+ "synapse-billing",
  "synapse-config",
  "synapse-core",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

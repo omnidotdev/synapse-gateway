@@ -23,15 +23,15 @@ synapse-billing.workspace = true
 synapse-cache.workspace = true
 synapse-config.workspace = true
 synapse-core.workspace = true
-synapse-embeddings.workspace = true
-synapse-imagegen.workspace = true
+synapse-embeddings = { workspace = true, features = ["billing"] }
+synapse-imagegen = { workspace = true, features = ["billing"] }
 synapse-llm = { workspace = true, features = ["http", "billing", "cache"] }
 synapse-mcp.workspace = true
 synapse-guardrails.workspace = true
 synapse-ratelimit.workspace = true
 synapse-telemetry.workspace = true
-stt.workspace = true
-tts.workspace = true
+stt = { workspace = true, features = ["billing"] }
+tts = { workspace = true, features = ["billing"] }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["net", "signal"] }
 tokio-util.workspace = true

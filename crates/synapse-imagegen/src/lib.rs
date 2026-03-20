@@ -18,7 +18,8 @@ use synapse_core::RequestContext;
 pub use error::{ImageGenError, Result};
 pub use types::{ImageData, ImageRequest, ImageResponse};
 
-use server::{ImageGenServerBuilder, Server};
+use server::ImageGenServerBuilder;
+pub use server::Server;
 
 /// Build the image generation server from configuration
 ///
