@@ -69,6 +69,26 @@ pub struct BillingIdentity {
     pub mode: BillingMode,
 }
 
+/// Per-request token limits resolved from entitlements
+///
+/// Stored in request extensions by the entitlement middleware so that
+/// downstream guardrails can enforce tier-specific token caps
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenLimits {
+    /// Maximum input tokens per request (e.g. 8192 for free, 200000 for pro)
+    pub max_input_tokens: usize,
+    /// Maximum output tokens per request (e.g. 4096 for free, 32768 for pro)
+    pub max_output_tokens: usize,
+}
+
+impl TokenLimits {
+    /// Conservative free-tier defaults matching the Aether SSOT
+    pub const FREE_TIER: Self = Self {
+        max_input_tokens: 8192,
+        max_output_tokens: 4096,
+    };
+}
+
 /// How this request should be billed
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BillingMode {

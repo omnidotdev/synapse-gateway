@@ -6,9 +6,9 @@ use axum::response::{IntoResponse, Response};
 use http::StatusCode;
 use synapse_billing::AetherClient;
 use synapse_config::{BillingConfig, FailMode};
-use synapse_core::BillingIdentity;
+use synapse_core::{BillingIdentity, TokenLimits};
 
-use crate::entitlement_cache::{CachedEntitlement, CachedUsageCheck, EntitlementCache};
+use crate::entitlement_cache::{CachedEntitlement, CachedTokenLimits, CachedUsageCheck, EntitlementCache};
 
 /// Shared state for the entitlement middleware
 #[derive(Clone)]
@@ -43,7 +43,8 @@ impl EntitlementState {
 /// 3. Checks usage limit for `requests` meter → 429 if exceeded
 /// 4. Checks usage limit for `input_tokens` meter → 429 if exceeded
 /// 5. Checks usage limit for `output_tokens` meter → 429 if exceeded
-pub async fn entitlement_middleware(state: EntitlementState, request: Request, next: Next) -> Response {
+/// 6. Resolves per-request token limits from entitlements → sets `TokenLimits` extension
+pub async fn entitlement_middleware(state: EntitlementState, mut request: Request, next: Next) -> Response {
     let Some(identity) = request.extensions().get::<BillingIdentity>() else {
         // No billing identity — request is unauthenticated or on a public path;
         // auth middleware already passed it through, so skip entitlement checks
@@ -128,6 +129,11 @@ pub async fn entitlement_middleware(state: EntitlementState, request: Request, n
         }
     }
 
+    // 6. Resolve per-request token limits from entitlements so that the
+    //    guardrails middleware can enforce tier-specific caps
+    let token_limits = resolve_token_limits(&state, entity_type, entity_id).await;
+    request.extensions_mut().insert(token_limits);
+
     next.run(request).await
 }
 
@@ -193,6 +199,62 @@ async fn check_usage(
     );
 
     Ok(response.allowed)
+}
+
+/// Entitlement feature key for per-request input token limit
+const MAX_INPUT_TOKENS_KEY: &str = "max_input_tokens_per_request";
+/// Entitlement feature key for per-request output token limit
+const MAX_OUTPUT_TOKENS_KEY: &str = "max_output_tokens_per_request";
+
+/// Resolve per-request token limits from Aether entitlements
+///
+/// Falls back to free-tier defaults when Aether is unreachable or the
+/// entitlement values are missing
+async fn resolve_token_limits(state: &EntitlementState, entity_type: &str, entity_id: &str) -> TokenLimits {
+    // Check cache first
+    if let Some(cached) = state.cache.get_token_limits(entity_type, entity_id) {
+        return cached.limits;
+    }
+
+    // Fetch all entitlements from Aether
+    let limits = match state.client.get_entitlements(entity_type, entity_id).await {
+        Ok(response) => {
+            let max_input = extract_usize_entitlement(&response.entitlements, MAX_INPUT_TOKENS_KEY)
+                .unwrap_or(TokenLimits::FREE_TIER.max_input_tokens);
+            let max_output = extract_usize_entitlement(&response.entitlements, MAX_OUTPUT_TOKENS_KEY)
+                .unwrap_or(TokenLimits::FREE_TIER.max_output_tokens);
+
+            TokenLimits {
+                max_input_tokens: max_input,
+                max_output_tokens: max_output,
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "failed to fetch entitlements for token limits, using free-tier defaults"
+            );
+            TokenLimits::FREE_TIER
+        }
+    };
+
+    // Cache the result
+    state
+        .cache
+        .put_token_limits(entity_type, entity_id, CachedTokenLimits { limits: limits.clone() });
+
+    limits
+}
+
+/// Extract a numeric entitlement value as `usize`
+fn extract_usize_entitlement(entitlements: &[synapse_billing::types::EntitlementEntry], key: &str) -> Option<usize> {
+    entitlements.iter().find(|e| e.feature_key == key).and_then(|e| {
+        e.value.as_ref().and_then(|v| match v {
+            serde_json::Value::Number(n) => n.as_u64().and_then(|n| usize::try_from(n).ok()),
+            serde_json::Value::String(s) => s.parse::<usize>().ok(),
+            _ => None,
+        })
+    })
 }
 
 /// Handle an Aether communication error based on fail mode

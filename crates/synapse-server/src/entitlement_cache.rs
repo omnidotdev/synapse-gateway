@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use mini_moka::sync::Cache;
+use synapse_core::TokenLimits;
 
 /// Cached result of an entitlement check
 #[derive(Debug, Clone)]
@@ -19,6 +20,13 @@ pub struct CachedUsageCheck {
     pub allowed: bool,
 }
 
+/// Cached per-request token limits resolved from entitlements
+#[derive(Debug, Clone)]
+pub struct CachedTokenLimits {
+    /// Resolved token limits
+    pub limits: TokenLimits,
+}
+
 /// In-memory TTL cache for entitlement and usage checks
 ///
 /// Reduces load on Aether by caching positive results for a
@@ -27,6 +35,7 @@ pub struct CachedUsageCheck {
 pub struct EntitlementCache {
     entitlements: Cache<String, CachedEntitlement>,
     usage: Cache<String, CachedUsageCheck>,
+    token_limits: Cache<String, CachedTokenLimits>,
 }
 
 impl EntitlementCache {
@@ -37,6 +46,7 @@ impl EntitlementCache {
         Self {
             entitlements: Cache::builder().max_capacity(10_000).time_to_live(ttl).build(),
             usage: Cache::builder().max_capacity(10_000).time_to_live(ttl).build(),
+            token_limits: Cache::builder().max_capacity(10_000).time_to_live(ttl).build(),
         }
     }
 
@@ -62,6 +72,25 @@ impl EntitlementCache {
     pub fn put_usage(&self, entity_type: &str, entity_id: &str, meter_key: &str, result: CachedUsageCheck) {
         let key = format!("{entity_type}:{entity_id}:{meter_key}");
         self.usage.insert(key, result);
+    }
+
+    /// Look up cached per-request token limits
+    pub fn get_token_limits(&self, entity_type: &str, entity_id: &str) -> Option<CachedTokenLimits> {
+        let key = format!("{entity_type}:{entity_id}:token_limits");
+        self.token_limits.get(&key)
+    }
+
+    /// Cache per-request token limits
+    pub fn put_token_limits(&self, entity_type: &str, entity_id: &str, result: CachedTokenLimits) {
+        let key = format!("{entity_type}:{entity_id}:token_limits");
+        self.token_limits.insert(key, result);
+    }
+
+    /// Invalidate cached per-request token limits (used by entitlement webhooks)
+    #[allow(dead_code)]
+    pub fn invalidate_token_limits(&self, entity_type: &str, entity_id: &str) {
+        let key = format!("{entity_type}:{entity_id}:token_limits");
+        self.token_limits.invalidate(&key);
     }
 
     /// Invalidate a specific cached entitlement
@@ -122,6 +151,34 @@ mod tests {
         let result = cache.get_usage("user", "usr_1", "input_tokens");
         assert!(result.is_some());
         assert!(result.unwrap().allowed);
+    }
+
+    #[test]
+    fn cache_token_limits_hit() {
+        let cache = EntitlementCache::new(60);
+
+        cache.put_token_limits(
+            "user",
+            "usr_1",
+            CachedTokenLimits {
+                limits: TokenLimits {
+                    max_input_tokens: 8192,
+                    max_output_tokens: 4096,
+                },
+            },
+        );
+
+        let result = cache.get_token_limits("user", "usr_1");
+        assert!(result.is_some());
+        let limits = result.unwrap().limits;
+        assert_eq!(limits.max_input_tokens, 8192);
+        assert_eq!(limits.max_output_tokens, 4096);
+    }
+
+    #[test]
+    fn cache_token_limits_miss() {
+        let cache = EntitlementCache::new(60);
+        assert!(cache.get_token_limits("user", "usr_1").is_none());
     }
 
     #[test]
