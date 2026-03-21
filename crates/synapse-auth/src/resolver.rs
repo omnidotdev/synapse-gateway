@@ -16,11 +16,18 @@ use crate::AuthError;
 #[serde(rename_all = "camelCase")]
 pub struct RateLimits {
     /// Maximum requests per minute
+    #[serde(default)]
     pub requests_per_minute: u32,
     /// Maximum tokens per day (`-1` = unlimited)
+    #[serde(default = "unlimited")]
     pub tokens_per_day: i64,
     /// Maximum tokens per month (`-1` = unlimited)
+    #[serde(default = "unlimited")]
     pub tokens_per_month: i64,
+}
+
+const fn unlimited() -> i64 {
+    -1
 }
 
 /// Resolved API key context from synapse-api
