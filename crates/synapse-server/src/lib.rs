@@ -68,6 +68,7 @@ impl Server {
                 managed_margins.insert(name.clone(), provider_config.margin);
             }
             llm_state.set_managed_providers(managed_keys, managed_margins);
+            llm_state.set_tier_margins(billing_config.tier_margins.clone());
 
             // Attach usage recorder for LLM
             let recorder_client = synapse_billing::AetherClient::new(

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use indexmap::IndexMap;
 use secrecy::SecretString;
 use serde::Deserialize;
@@ -33,6 +35,10 @@ pub struct BillingConfig {
     /// TTL in seconds for cached entitlement checks
     #[serde(default = "default_entitlement_cache_ttl_secs")]
     pub entitlement_cache_ttl_secs: u64,
+    /// Per-tier margin multipliers (e.g. "free" = 1.2, "pro" = 1.15)
+    /// When set, these override the per-provider margin for that tier
+    #[serde(default)]
+    pub tier_margins: HashMap<String, f64>,
     /// Behavior when Aether is unreachable
     #[serde(default)]
     pub fail_mode: FailMode,
@@ -348,5 +354,39 @@ mod tests {
         assert_eq!(modality_display_name("embeddings_enabled"), "Embeddings");
         assert_eq!(modality_display_name("image_gen_enabled"), "Image generation");
         assert_eq!(modality_display_name("unknown_key"), "This feature");
+    }
+
+    #[test]
+    fn deserialize_tier_margins() {
+        let toml = r#"
+            enabled = true
+            aether_url = "https://aether.omni.dev/"
+            service_api_key = "sk-test-123"
+            app_id = "synapse"
+
+            [tier_margins]
+            free = 1.2
+            pro = 1.15
+            team = 1.15
+        "#;
+
+        let config: BillingConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.tier_margins.len(), 3);
+        assert!((config.tier_margins["free"] - 1.2).abs() < f64::EPSILON);
+        assert!((config.tier_margins["pro"] - 1.15).abs() < f64::EPSILON);
+        assert!((config.tier_margins["team"] - 1.15).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn tier_margins_default_empty() {
+        let toml = r#"
+            enabled = true
+            aether_url = "https://aether.omni.dev/"
+            service_api_key = "sk-test-123"
+            app_id = "synapse"
+        "#;
+
+        let config: BillingConfig = toml::from_str(toml).unwrap();
+        assert!(config.tier_margins.is_empty());
     }
 }

@@ -249,17 +249,22 @@ fail_mode = "open"
 # embeddings_feature_key = "embeddings_enabled"
 # image_gen_feature_key = "image_gen_enabled"
 
+[billing.tier_margins]
+free = 1.2
+pro = 1.15
+team = 1.15
+
 [billing.managed_providers.openai]
 api_key = "{{ env.OPENAI_API_KEY }}"
-margin = 1.2
+margin = 1.0
 
 [billing.managed_providers.anthropic]
 api_key = "{{ env.ANTHROPIC_API_KEY }}"
-margin = 1.15
+margin = 1.0
 
 [billing.managed_providers.nvidia]
 api_key = "{{ env.NVIDIA_API_KEY }}"
-margin = 1.15
+margin = 1.0
 
 # ------------------------------------
 # Response Cache
