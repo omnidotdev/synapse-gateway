@@ -240,7 +240,7 @@ mod tests {
         let body = serde_json::json!({
             "model": "gpt-4o",
             "messages": [{"role": "user", "content": "hi"}],
-            "max_completion_tokens": 100000
+            "max_completion_tokens": 100_000
         });
         let bytes = serde_json::to_vec(&body).unwrap();
         let result = clamp_max_tokens(&bytes, 32768);
