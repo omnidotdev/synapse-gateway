@@ -31,3 +31,4 @@ node_modules/
 # Agentic
 PLAN.md
 .claude/
+.playwright-mcp/
